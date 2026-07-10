@@ -1,0 +1,80 @@
+# EmerCard Backend
+
+Phase 1 provides the backend and database foundation for the fictional EmerCard school-project demo. It is not production-safe for real medical information.
+
+## Requirements
+
+- Python 3.14.6
+- [`uv`](https://docs.astral.sh/uv/)
+- Docker Engine with Compose v2
+
+## Local setup
+
+```bash
+python3.14 -m venv .venv
+source .venv/bin/activate
+uv sync --all-groups
+cp .env.example .env
+```
+
+Dependencies must be installed while the project virtual environment is active. `uv.lock` is committed and is the source of reproducible dependency resolution.
+
+## Run modes
+
+For a host-run API, start MongoDB through Compose and use the localhost URI from `.env`:
+
+```bash
+docker compose up -d mongodb
+source .venv/bin/activate
+uv run uvicorn emercard.main:app --host 127.0.0.1 --port 8000
+```
+
+For the full container path, the API must use the Compose service name (`mongodb`) rather than `localhost`:
+
+```bash
+docker compose up --build
+```
+
+The API listens on `http://localhost:8000`; MongoDB is published on `localhost:27017` for host-run development. MongoDB data persists in the named `mongodb-data` volume. The Compose file uses MongoDB 8.2 as the verified local fallback because MongoDB 8.3 exits on Linux kernel 6.19+ (SERVER-121912); revisit the Plan 01 8.3 baseline when the runtime becomes compatible.
+
+## Verification
+
+```bash
+source .venv/bin/activate
+uv run ruff check .
+uv run ruff format --check .
+uv run pyright
+uv run pytest
+```
+
+Smoke checks:
+
+```bash
+curl -i http://localhost:8000/health
+curl -i http://localhost:8000/ready
+curl -i http://localhost:8000/api/v1/meta
+```
+
+`/health` is a process liveness check and remains successful if MongoDB is stopped. `/ready` pings MongoDB through the single managed PyMongo async client and returns `503` with a safe error envelope when MongoDB is unavailable. `X-Request-ID` is generated or safely propagated on responses.
+
+## Configuration
+
+All environment-dependent values are loaded by the typed `Settings` object. Copy `.env.example` to `.env` for local work. Deployed environments must provide values through platform environment settings, not committed files.
+
+For Atlas, set `EMERCARD_MONGODB_URI` to the TLS connection string and use a separate least-privilege demo database user. Set `EMERCARD_ENVIRONMENT=demo`, `EMERCARD_DEBUG=false`, `EMERCARD_MONGODB_TLS_REQUIRED=true`, a 32-character-or-longer `EMERCARD_AUTH_SECRET` placeholder for future auth, and the exact deployed frontend origin in `EMERCARD_CORS_ORIGINS`.
+
+Do not log or commit MongoDB URIs, secrets, tokens, cookies, request bodies, or fictional medical fields. Do not use real medical data.
+
+## HTTP contract
+
+- `GET /health` returns `200` and `{ "status": "ok" }` without a database query.
+- `GET /ready` returns `200` only after a successful MongoDB ping, otherwise `503` with `error.code=database_unavailable`.
+- `GET /api/v1/meta` returns non-sensitive application and build metadata.
+- Errors contain an error code, human-readable message, optional sanitized details, and `request_id`.
+- CORS uses the configured origin allowlist; wildcard origins are rejected by settings.
+
+## Deployment boundary
+
+The intended demo deployment is one Render web service connected to one MongoDB Atlas demo cluster. Configure the Render build command as `uv sync --locked --no-dev`, the start command as `uv run --no-dev uvicorn emercard.main:app --host 0.0.0.0 --port $PORT`, and the health check path as `/health`. Keep Atlas network access and the final frontend URL restricted to the project’s deployment requirements. Record provider-specific service names and URLs in deployment notes only after they are created; never commit credentials.
+
+Phase 1 intentionally excludes domain collections, indexes, authentication, profile CRUD, public links, Redis, messaging, encryption, cards, scans, audits, and admin features. Those belong to later plans.

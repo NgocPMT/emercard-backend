@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: emercard-api
+    runtime: python
+    plan: free
+    buildCommand: pip install uv==0.11.19 && uv sync --locked --no-dev
+    startCommand: uv run --no-dev uvicorn emercard.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: EMERCARD_ENVIRONMENT
+        value: demo
+      - key: EMERCARD_DEBUG
+        value: "false"
+      - key: EMERCARD_MONGODB_URI
+        sync: false
+      - key: EMERCARD_MONGODB_DATABASE
+        sync: false
+      - key: EMERCARD_MONGODB_TLS_REQUIRED
+        value: "true"
+      - key: EMERCARD_AUTH_SECRET
+        generateValue: true
+      - key: EMERCARD_CORS_ORIGINS
+        sync: false
+      - key: EMERCARD_CORS_ALLOW_CREDENTIALS
+        value: "false"

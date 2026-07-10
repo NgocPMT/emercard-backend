@@ -1,0 +1,10 @@
+.venv
+.env
+.git
+.pytest_cache
+.ruff_cache
+.pyright
+__pycache__
+*.py[cod]
+mongodb-data
+.plan

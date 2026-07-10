@@ -1,0 +1,43 @@
+services:
+  mongodb:
+    # MongoDB 8.2 is the compatible local fallback for Linux kernel 6.19+.
+    image: mongo:8.2
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: emercard_local
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --host localhost --eval 'db.adminCommand({ ping: 1 }).ok' | grep -q 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      EMERCARD_ENVIRONMENT: local
+      EMERCARD_DEBUG: "false"
+      EMERCARD_HOST: 0.0.0.0
+      EMERCARD_PORT: 8000
+      EMERCARD_MONGODB_URI: mongodb://mongodb:27017
+      EMERCARD_MONGODB_DATABASE: emercard_local
+      EMERCARD_MONGODB_SERVER_SELECTION_TIMEOUT_MS: 1500
+      EMERCARD_MONGODB_TLS_REQUIRED: "false"
+      EMERCARD_CORS_ORIGINS: '["http://localhost:4321"]'
+      EMERCARD_CORS_ALLOW_CREDENTIALS: "false"
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+volumes:
+  mongodb-data:
+    name: emercard-mongodb-data
