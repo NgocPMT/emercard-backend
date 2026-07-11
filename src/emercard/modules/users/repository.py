@@ -26,6 +26,9 @@ class UserRepository:
     async def find_by_id(self, user_id: ObjectId | str) -> UserDocument | None:
         identifier = _object_id(user_id)
         document = await self._collection.find_one({"_id": identifier})
+        if document is None:
+            # Read legacy local accounts created before ObjectId preservation was fixed.
+            document = await self._collection.find_one({"_id": str(identifier)})
         return UserDocument.model_validate(document) if document is not None else None
 
     async def create(
@@ -43,8 +46,11 @@ class UserRepository:
             created_at=timestamp,
             updated_at=timestamp,
         )
+        persisted = document.model_dump(by_alias=True)
+        # ObjectIdValue serializes for API-shaped dumps; MongoDB must retain BSON ObjectId.
+        persisted["_id"] = document.id
         try:
-            await self._collection.insert_one(document.model_dump(by_alias=True))
+            await self._collection.insert_one(persisted)
         except DuplicateKeyError as error:
             raise RepositoryConflictError("user email already exists") from error
         return document

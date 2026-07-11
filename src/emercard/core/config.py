@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     mongodb_index_initialization_mode: IndexInitializationMode = "disabled"
 
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:4321"])
-    cors_allow_credentials: bool = False
+    cors_allow_credentials: bool = True
     frontend_base_url: str | None = None
 
     public_link_token_bytes: Annotated[int, Field(ge=16, le=128)] = 32
@@ -110,6 +110,13 @@ class Settings(BaseSettings):
             raise ValueError("frontend_base_url must be an absolute http(s) URL")
         return normalized
 
+    @field_validator("auth_cookie_domain")
+    @classmethod
+    def reject_auth_cookie_domain(cls, value: str | None) -> None:
+        if value is not None:
+            raise ValueError("auth_cookie_domain must remain unset for host-only cookies")
+        return None
+
     @field_validator("log_level", mode="before")
     @classmethod
     def normalize_log_level(cls, value: object) -> object:
@@ -161,8 +168,14 @@ class Settings(BaseSettings):
         if self.environment in {"demo", "staging", "production"}:
             if not self.auth_cookie_secure:
                 raise ValueError("auth_cookie_secure must be true for deployments")
+            if not self.cors_allow_credentials:
+                raise ValueError("cors_allow_credentials must be true for deployments")
             if self.frontend_base_url is None:
                 raise ValueError("frontend_base_url is required for deployments")
+            if not self.frontend_base_url.startswith("https://"):
+                raise ValueError("frontend_base_url must use https for deployments")
+            if self.frontend_base_url not in self.cors_origins:
+                raise ValueError("frontend_base_url must be included in cors_origins")
         if self.auth_cookie_same_site == "none" and not self.auth_cookie_secure:
             raise ValueError("auth_cookie_secure must be true when auth_cookie_same_site is 'none'")
         return self

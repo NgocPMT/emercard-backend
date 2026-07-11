@@ -75,7 +75,7 @@ curl -i http://localhost:8000/api/v1/meta
 
 All environment-dependent values are loaded by the typed `Settings` object. Copy `.env.example` to `.env` for local work. Deployed environments must provide values through platform environment settings, not committed files.
 
-For Atlas, set `EMERCARD_MONGODB_URI` to the TLS connection string and use a separate least-privilege demo database user. Set `EMERCARD_ENVIRONMENT=demo`, `EMERCARD_DEBUG=false`, `EMERCARD_MONGODB_TLS_REQUIRED=true`, a 32-character-or-longer `EMERCARD_AUTH_SECRET` placeholder for future auth, and the exact deployed frontend origin in `EMERCARD_CORS_ORIGINS`.
+For Atlas, set `EMERCARD_MONGODB_URI` to the TLS connection string and use a separate least-privilege demo database user. Set `EMERCARD_ENVIRONMENT=demo`, `EMERCARD_DEBUG=false`, `EMERCARD_MONGODB_TLS_REQUIRED=true`, a random 32-character-or-longer `EMERCARD_AUTH_SECRET`, `EMERCARD_AUTH_COOKIE_SECURE=true`, and the exact deployed frontend origin (`https://app.emercard.id.vn`) in `EMERCARD_CORS_ORIGINS`. Keep `EMERCARD_CORS_ALLOW_CREDENTIALS=true`; authentication uses a host-only HTTP-only cookie and never sets a cookie domain.
 
 Do not log or commit MongoDB URIs, secrets, tokens, cookies, request bodies, or fictional medical fields. Do not use real medical data.
 
@@ -84,11 +84,16 @@ Do not log or commit MongoDB URIs, secrets, tokens, cookies, request bodies, or 
 - `GET /health` returns `200` and `{ "status": "ok" }` without a database query.
 - `GET /ready` returns `200` only after a successful MongoDB ping, otherwise `503` with `error.code=database_unavailable`.
 - `GET /api/v1/meta` returns non-sensitive application and build metadata.
+- `POST /api/v1/auth/register` returns `201` with a direct `CurrentUserOutput`; registration does not authenticate the account.
+- `POST /api/v1/auth/login` returns `200` with `CurrentUserOutput` and sets the short-lived `emercard_session` cookie.
+- `GET /api/v1/me` returns the authenticated `CurrentUserOutput`; `POST /api/v1/auth/logout` returns `204` and expires the cookie.
+- Browser calls from the exact configured frontend origin must use `fetch(..., { credentials: "include" })`; local development uses `http://localhost:4321`.
+- Phase 1 logout is stateless: a copied JWT remains valid until its 15-minute expiry. Do not claim immediate revocation.
 - Errors contain an error code, human-readable message, optional sanitized details, and `request_id`.
-- CORS uses the configured origin allowlist; wildcard origins are rejected by settings.
+- CORS uses the configured exact origin allowlist with credentials enabled; wildcard origins and configured cookie domains are rejected by settings.
 
 ## Deployment boundary
 
 The intended demo deployment is one Render web service connected to one MongoDB Atlas demo cluster. Configure the Render build command as `uv sync --locked --no-dev`, the start command as `uv run --no-dev uvicorn emercard.main:app --host 0.0.0.0 --port $PORT`, and the health check path as `/health`. Keep Atlas network access and the final frontend URL restricted to the project’s deployment requirements. Record provider-specific service names and URLs in deployment notes only after they are created; never commit credentials.
 
-Phase 1 Plan 02 now includes the `users` and `medical_profiles` persistence contract, indexes, typed repositories, and isolated repository verification. It still excludes authentication endpoints, profile/public-link HTTP routes, Redis, messaging, encryption, cards, scans, audits, and admin features; those belong to later plans.
+Phase 1 now includes the `users` and `medical_profiles` persistence contract, typed repositories, cookie-based authentication endpoints, and isolated verification. Profile/public-link HTTP routes, Redis, messaging, encryption, cards, scans, audits, and admin features remain out of scope for this stage.

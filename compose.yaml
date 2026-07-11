@@ -31,7 +31,7 @@ services:
       EMERCARD_MONGODB_SERVER_SELECTION_TIMEOUT_MS: 1500
       EMERCARD_MONGODB_TLS_REQUIRED: "false"
       EMERCARD_CORS_ORIGINS: '["http://localhost:4321"]'
-      EMERCARD_CORS_ALLOW_CREDENTIALS: "false"
+      EMERCARD_CORS_ALLOW_CREDENTIALS: "true"
     ports:
       - "8000:8000"
     depends_on:

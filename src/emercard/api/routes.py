@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from emercard.api.auth_routes import build_auth_router, build_current_user_router
 from emercard.api.errors import error_payload
 from emercard.db import Database
 
@@ -40,6 +41,9 @@ def build_infrastructure_router() -> APIRouter:
 
 def build_api_router() -> APIRouter:
     router = APIRouter()
+
+    router.include_router(build_auth_router())
+    router.include_router(build_current_user_router())
 
     @router.get("/meta", tags=["infrastructure"])
     async def meta(request: Request) -> dict[str, Any]:  # pyright: ignore[reportUnusedFunction]

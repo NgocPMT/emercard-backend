@@ -7,6 +7,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from emercard.modules.auth.exceptions import AuthError
+
 
 def _request_id(request: Request) -> str:
     return getattr(request.state, "request_id", "unknown")
@@ -29,6 +31,13 @@ def error_payload(
     if details is not None:
         payload["error"]["details"] = details
     return payload
+
+
+def auth_exception_handler(request: Request, exc: AuthError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=error_payload(request, code=exc.code, message=exc.message),
+    )
 
 
 def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:

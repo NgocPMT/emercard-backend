@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from emercard.api.errors import (
+    auth_exception_handler,
     http_exception_handler,
     unhandled_exception_handler,
     validation_exception_handler,
@@ -19,6 +20,7 @@ from emercard.api.middleware import request_context_middleware
 from emercard.api.routes import build_api_router, build_infrastructure_router
 from emercard.core.config import Settings, get_settings
 from emercard.db import Database, initialize_indexes
+from emercard.modules.auth.exceptions import AuthError
 
 
 @asynccontextmanager
@@ -36,6 +38,7 @@ async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(
     settings: Settings | None = None,
     database: Database | None = None,
+    auth_repository: Any | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     logging.getLogger("emercard.request").setLevel(app_settings.log_level)
@@ -47,6 +50,8 @@ def create_app(
     )
     app.state.settings = app_settings
     app.state.database = database or Database(app_settings)
+    if auth_repository is not None:
+        app.state.auth_repository = auth_repository
 
     app.add_middleware(
         CORSMiddleware,
@@ -57,6 +62,7 @@ def create_app(
         expose_headers=["X-Request-ID"],
     )
     app.middleware("http")(request_context_middleware)
+    app.add_exception_handler(AuthError, cast(Any, auth_exception_handler))
     app.add_exception_handler(StarletteHTTPException, cast(Any, http_exception_handler))
     app.add_exception_handler(RequestValidationError, cast(Any, validation_exception_handler))
     app.add_exception_handler(Exception, cast(Any, unhandled_exception_handler))

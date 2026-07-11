@@ -76,6 +76,7 @@ def test_configured_origin_is_allowed_and_unknown_origin_is_not(
 
     assert allowed.status_code == 200
     assert allowed.headers["access-control-allow-origin"] == "http://localhost:4321"
+    assert allowed.headers["access-control-allow-credentials"] == "true"
     assert "access-control-allow-origin" not in blocked.headers
 
 

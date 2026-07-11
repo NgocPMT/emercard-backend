@@ -52,6 +52,19 @@ def raw_profile(*, token: str | None = None, enabled: bool = False) -> dict[str,
 
 
 @pytest.mark.asyncio
+async def test_user_repository_stores_bson_object_id_for_new_users() -> None:
+    database, collection = fake_database()
+    collection.insert_one = AsyncMock()
+    repository = UserRepository(database, Settings(environment="test"))
+
+    user = await repository.create(email="person@example.com", password_hash="argon2-hash")
+
+    inserted = collection.insert_one.await_args.args[0]
+    assert inserted["_id"] == user.id
+    assert isinstance(inserted["_id"], ObjectId)
+
+
+@pytest.mark.asyncio
 async def test_user_repository_canonicalizes_lookup_and_maps_duplicate_email() -> None:
     database, collection = fake_database()
     collection.find_one = AsyncMock(return_value=None)

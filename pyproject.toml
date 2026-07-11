@@ -5,8 +5,10 @@ description = "EmerCard Phase 1 backend foundation"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
 dependencies = [
+    "argon2-cffi==25.1.0",
     "fastapi==0.139.0",
     "pydantic-settings==2.13.1",
+    "pyjwt==2.10.1",
     "pymongo==4.17.0",
     "uvicorn[standard]==0.41.0",
 ]

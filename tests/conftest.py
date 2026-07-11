@@ -34,6 +34,7 @@ def settings() -> Settings:
         mongodb_uri="mongodb://localhost:27017",
         mongodb_database="emercard_test",
         cors_origins=["http://localhost:4321"],
+        cors_allow_credentials=True,
     )
 
 

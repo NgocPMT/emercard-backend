@@ -19,7 +19,11 @@ services:
         value: "true"
       - key: EMERCARD_AUTH_SECRET
         generateValue: true
+      - key: EMERCARD_FRONTEND_BASE_URL
+        sync: false
       - key: EMERCARD_CORS_ORIGINS
         sync: false
       - key: EMERCARD_CORS_ALLOW_CREDENTIALS
-        value: "false"
+        value: "true"
+      - key: EMERCARD_AUTH_COOKIE_SECURE
+        value: "true"
