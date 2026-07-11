@@ -64,16 +64,41 @@ def test_profile_input_does_not_accept_client_controlled_ids_or_public_state() -
         )
 
 
+@pytest.mark.parametrize(
+    "phone",
+    ["1234567890", "090123456", "09012345678", "090 1234567", "+84901234567"],
+)
+def test_contact_phone_must_be_a_ten_digit_vietnamese_number(phone: str) -> None:
+    with pytest.raises(ValidationError):
+        EmergencyContactInput(name="Alex Example", relationship="Friend", phone=phone)
+
+
+def test_legacy_profile_phone_can_be_read_without_relaxing_new_input_validation() -> None:
+    legacy_contact = EmergencyContactDocument(
+        name="Alex Example",
+        relationship="Friend",
+        phone="036493303822",
+    )
+
+    assert legacy_contact.phone == "036493303822"
+    with pytest.raises(ValidationError):
+        EmergencyContactInput(
+            name="Alex Example",
+            relationship="Friend",
+            phone="036493303822",
+        )
+
+
 def test_profile_limits_and_contact_ids_are_enforced() -> None:
     contact = EmergencyContactDocument(
         name="Alex Example",
         relationship="Friend",
-        phone="+84 90 123 4567",
+        phone="0901234567",
     )
     assert contact.id
 
     with pytest.raises(ValidationError):
-        EmergencyContactInput(name="", relationship="Friend", phone="+84 90 123 4567")
+        EmergencyContactInput(name="", relationship="Friend", phone="0901234567")
     with pytest.raises(ValidationError):
         ProfileUpsertInput(birth_year=1800, emergency_contacts=[])
 
@@ -93,7 +118,7 @@ def _profile(**overrides: object) -> ProfileDocument:
             {
                 "name": "Sam Example",
                 "relationship": "Friend",
-                "phone": "+84 90 123 4567",
+                "phone": "0901234567",
             }
         ],
         "created_at": "2026-01-01T00:00:00Z",
@@ -131,7 +156,7 @@ def test_public_output_is_an_explicit_allowlist() -> None:
             "critical_medications": [],
             "emergency_note": None,
             "emergency_contacts": [
-                {"name": "Sam Example", "relationship": "Friend", "phone": "+84 90 123 4567"}
+                {"name": "Sam Example", "relationship": "Friend", "phone": "0901234567"}
             ],
         }
     )

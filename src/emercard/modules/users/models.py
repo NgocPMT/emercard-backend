@@ -23,7 +23,7 @@ def canonicalize_email(value: str) -> str:
 
     normalized = value.strip().lower()
     if len(normalized) > 254 or not _EMAIL_PATTERN.fullmatch(normalized):
-        raise ValueError("email must be a valid email address")
+        raise ValueError("Email không hợp lệ")
     return normalized
 
 

@@ -85,11 +85,7 @@ class ProfileRepository:
 
         identifier = _object_id(user_id)
         timestamp = now or utc_now()
-        profile_fields = profile.model_dump(mode="python")
-        profile_fields["emergency_contacts"] = [
-            EmergencyContactDocument.model_validate(contact.model_dump()).model_dump(mode="python")
-            for contact in profile.emergency_contacts
-        ]
+        profile_fields = _profile_fields(profile)
         update = {
             "$set": {**profile_fields, "updated_at": timestamp},
             "$setOnInsert": {
@@ -127,6 +123,24 @@ class ProfileRepository:
         if document is None:
             raise RepositoryConflictError("profile upsert did not return a document")
         return ProfileDocument.model_validate(document)
+
+    async def replace_for_user(
+        self,
+        *,
+        user_id: ObjectId | str,
+        profile: ProfileUpsertInput,
+        now: datetime | None = None,
+    ) -> ProfileDocument | None:
+        """Atomically replace editable fields without creating a missing profile."""
+
+        identifier = _object_id(user_id)
+        timestamp = now or utc_now()
+        document = await self._collection.find_one_and_update(
+            {"user_id": identifier},
+            {"$set": {**_profile_fields(profile), "updated_at": timestamp}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return _profile(document)
 
     async def publish(
         self,
@@ -230,6 +244,15 @@ class ProfileRepository:
             {"public_access.token": token, "public_access.enabled": True}
         )
         return _profile(document)
+
+
+def _profile_fields(profile: ProfileUpsertInput) -> dict[str, Any]:
+    profile_fields = profile.model_dump(mode="python")
+    profile_fields["emergency_contacts"] = [
+        EmergencyContactDocument.model_validate(contact.model_dump()).model_dump(mode="python")
+        for contact in profile.emergency_contacts
+    ]
+    return profile_fields
 
 
 def _profile(document: Any) -> ProfileDocument | None:

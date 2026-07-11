@@ -1,6 +1,7 @@
 """Medical-profile domain models and persistence operations."""
 
 from emercard.modules.profiles.models import (
+    AuthenticatedProfileOutput,
     BloodType,
     EmergencyContactDocument,
     EmergencyContactInput,
@@ -14,10 +15,14 @@ from emercard.modules.profiles.models import (
     PublicLinkActionInput,
     PublicProfileOutput,
     profile_state,
+    to_authenticated_profile,
+    to_public_profile,
 )
 from emercard.modules.profiles.repository import ProfileRepository
+from emercard.modules.profiles.service import ProfileService
 
 __all__ = [
+    "AuthenticatedProfileOutput",
     "BloodType",
     "EmergencyContactDocument",
     "EmergencyContactInput",
@@ -31,5 +36,8 @@ __all__ = [
     "PublicLinkActionInput",
     "PublicProfileOutput",
     "profile_state",
+    "to_authenticated_profile",
+    "to_public_profile",
     "ProfileRepository",
+    "ProfileService",
 ]

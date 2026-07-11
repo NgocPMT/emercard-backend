@@ -37,7 +37,7 @@ def raw_profile(*, token: str | None = None, enabled: bool = False) -> dict[str,
                 "id": "contact-1",
                 "name": "Sam Example",
                 "relationship": "Friend",
-                "phone": "+84 90 123 4567",
+                "phone": "0901234567",
             }
         ],
         "public_access": {
@@ -94,6 +94,20 @@ async def test_profile_ensure_creates_empty_profile_without_overwriting_existing
 
 
 @pytest.mark.asyncio
+async def test_profile_repository_reads_legacy_phone_values() -> None:
+    database, collection = fake_database()
+    document = raw_profile()
+    document["emergency_contacts"][0]["phone"] = "036493303822"  # type: ignore[index]
+    collection.find_one = AsyncMock(return_value=document)
+    repository = ProfileRepository(database, Settings(environment="test"))
+
+    result = await repository.find_by_user_id(USER_ID)
+
+    assert result is not None
+    assert result.emergency_contacts[0].phone == "036493303822"
+
+
+@pytest.mark.asyncio
 async def test_profile_upsert_is_keyed_by_authenticated_user_and_generates_contact_id() -> None:
     database, collection = fake_database()
     collection.find_one_and_update = AsyncMock(return_value=raw_profile())
@@ -104,7 +118,7 @@ async def test_profile_upsert_is_keyed_by_authenticated_user_and_generates_conta
         gender="prefer_not_to_say",
         blood_type="O+",
         emergency_contacts=[
-            {"name": "Sam Example", "relationship": "Friend", "phone": "+84 90 123 4567"}
+            {"name": "Sam Example", "relationship": "Friend", "phone": "0901234567"}
         ],
     )
 
@@ -115,6 +129,30 @@ async def test_profile_upsert_is_keyed_by_authenticated_user_and_generates_conta
     assert update["$set"]["emergency_contacts"][0]["id"]
     assert update["$setOnInsert"]["user_id"] == USER_ID
     assert "user_id" not in update["$set"]
+
+
+@pytest.mark.asyncio
+async def test_profile_replace_does_not_upsert_or_touch_server_controlled_fields() -> None:
+    database, collection = fake_database()
+    collection.find_one_and_update = AsyncMock(return_value=raw_profile(token="legacy-token"))
+    repository = ProfileRepository(database, Settings(environment="test"))
+    profile = ProfileUpsertInput(
+        display_name="Updated",
+        emergency_contacts=[
+            {"name": "New Contact", "relationship": "Family", "phone": "0900000000"}
+        ],
+    )
+
+    result = await repository.replace_for_user(user_id=USER_ID, profile=profile)
+
+    assert result is not None
+    call = collection.find_one_and_update.await_args
+    assert call.kwargs.get("upsert") is None
+    assert call.args[0] == {"user_id": USER_ID}
+    assert "user_id" not in call.args[1]["$set"]
+    assert "public_access" not in call.args[1]["$set"]
+    assert call.args[1]["$set"]["display_name"] == "Updated"
+    assert call.args[1]["$set"]["emergency_contacts"][0]["id"]
 
 
 @pytest.mark.asyncio

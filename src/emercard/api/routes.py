@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from emercard.api.auth_routes import build_auth_router, build_current_user_router
 from emercard.api.errors import error_payload
+from emercard.api.profile_routes import build_profile_router
 from emercard.db import Database
 
 
@@ -31,7 +32,7 @@ def build_infrastructure_router() -> APIRouter:
             content=error_payload(
                 request,
                 code="database_unavailable",
-                message="The service is not ready",
+                message="Dịch vụ chưa sẵn sàng.",
             ),
             headers={"Retry-After": "5"},
         )
@@ -44,6 +45,7 @@ def build_api_router() -> APIRouter:
 
     router.include_router(build_auth_router())
     router.include_router(build_current_user_router())
+    router.include_router(build_profile_router())
 
     @router.get("/meta", tags=["infrastructure"])
     async def meta(request: Request) -> dict[str, Any]:  # pyright: ignore[reportUnusedFunction]

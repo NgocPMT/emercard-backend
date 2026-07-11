@@ -40,9 +40,9 @@ class ProfileModel(BaseModel):
 def _bounded_text(value: str, *, maximum: int, field_name: str) -> str:
     normalized = value.strip()
     if not normalized:
-        raise ValueError(f"{field_name} must not be empty")
+        raise ValueError(f"{field_name} không được để trống")
     if len(normalized) > maximum:
-        raise ValueError(f"{field_name} must be at most {maximum} characters")
+        raise ValueError(f"{field_name} không được dài quá {maximum} ký tự")
     return normalized
 
 
@@ -50,11 +50,11 @@ def _medical_item(value: str) -> str:
     return _bounded_text(
         value,
         maximum=get_settings().medical_item_max_length,
-        field_name="medical item",
+        field_name="mục thông tin y tế",
     )
 
 
-_PHONE_PATTERN = re.compile(r"^[0-9+().\-\s]+$")
+_PHONE_PATTERN = re.compile(r"^0\d{9}$")
 
 
 class EmergencyContactInput(ProfileModel):
@@ -70,7 +70,7 @@ class EmergencyContactInput(ProfileModel):
         return _bounded_text(
             value,
             maximum=get_settings().contact_name_max_length,
-            field_name="contact name",
+            field_name="tên người liên hệ",
         )
 
     @field_validator("relationship")
@@ -79,7 +79,7 @@ class EmergencyContactInput(ProfileModel):
         return _bounded_text(
             value,
             maximum=get_settings().contact_relationship_max_length,
-            field_name="contact relationship",
+            field_name="mối quan hệ",
         )
 
     @field_validator("phone")
@@ -88,19 +88,38 @@ class EmergencyContactInput(ProfileModel):
         normalized = _bounded_text(
             value,
             maximum=get_settings().contact_phone_max_length,
-            field_name="contact phone",
+            field_name="số điện thoại người liên hệ",
         )
-        if not _PHONE_PATTERN.fullmatch(normalized) or not any(
-            character.isdigit() for character in normalized
-        ):
-            raise ValueError("contact phone contains unsupported characters")
+        if not _PHONE_PATTERN.fullmatch(normalized):
+            raise ValueError("Số điện thoại phải có đúng 10 chữ số và bắt đầu bằng 0")
         return normalized
 
 
-class EmergencyContactDocument(EmergencyContactInput):
-    """Embedded persistence contact with an application-generated stable ID."""
+class EmergencyContactDocument(ProfileModel):
+    """Embedded persistence contact, including legacy phone values."""
 
     id: str = Field(default_factory=lambda: str(uuid4()), min_length=1, max_length=36)
+    name: str
+    relationship: str
+    phone: str
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return _bounded_text(
+            value,
+            maximum=get_settings().contact_name_max_length,
+            field_name="tên người liên hệ",
+        )
+
+    @field_validator("relationship")
+    @classmethod
+    def validate_relationship(cls, value: str) -> str:
+        return _bounded_text(
+            value,
+            maximum=get_settings().contact_relationship_max_length,
+            field_name="mối quan hệ",
+        )
 
 
 def _empty_document_contacts() -> list[EmergencyContactDocument]:
@@ -130,9 +149,9 @@ class PublicAccessDocument(ProfileModel):
     @model_validator(mode="after")
     def validate_enabled_state(self) -> PublicAccessDocument:
         if self.enabled and self.token is None:
-            raise ValueError("enabled public access requires a token")
+            raise ValueError("Quyền truy cập công khai đã bật phải có mã token")
         if self.enabled and self.published_at is None:
-            raise ValueError("enabled public access requires published_at")
+            raise ValueError("Quyền truy cập công khai đã bật phải có thời điểm công khai")
         return self
 
 
@@ -310,6 +329,23 @@ class ProfileDashboardOutput(ProfileModel):
     updated_at: UtcDateTime
 
 
+class AuthenticatedProfileOutput(ProfileModel):
+    """Sanitized current-user profile response without persistence metadata."""
+
+    display_name: str | None
+    birth_year: int | None
+    gender: Gender | None
+    blood_type: BloodType | None
+    critical_allergies: list[str]
+    important_conditions: list[str]
+    critical_medications: list[str]
+    emergency_note: str | None
+    emergency_contacts: list[EmergencyContactPublic]
+    state: ProfileState
+    created_at: UtcDateTime
+    updated_at: UtcDateTime
+
+
 class PublicProfileOutput(ProfileModel):
     """Explicit emergency-page allowlist with no persistence or ownership metadata."""
 
@@ -322,6 +358,52 @@ class PublicProfileOutput(ProfileModel):
     critical_medications: list[str]
     emergency_note: str | None
     emergency_contacts: list[EmergencyContactPublic]
+
+
+def _public_contacts(profile: ProfileDocument) -> list[EmergencyContactPublic]:
+    return [
+        EmergencyContactPublic(
+            name=contact.name,
+            relationship=contact.relationship,
+            phone=contact.phone,
+        )
+        for contact in profile.emergency_contacts
+    ]
+
+
+def to_authenticated_profile(profile: ProfileDocument) -> AuthenticatedProfileOutput:
+    """Map a persisted profile to the allowlisted authenticated response."""
+
+    return AuthenticatedProfileOutput(
+        display_name=profile.display_name,
+        birth_year=profile.birth_year,
+        gender=profile.gender,
+        blood_type=profile.blood_type,
+        critical_allergies=list(profile.critical_allergies),
+        important_conditions=list(profile.important_conditions),
+        critical_medications=list(profile.critical_medications),
+        emergency_note=profile.emergency_note,
+        emergency_contacts=_public_contacts(profile),
+        state=profile_state(profile),
+        created_at=profile.created_at,
+        updated_at=profile.updated_at,
+    )
+
+
+def to_public_profile(profile: ProfileDocument) -> PublicProfileOutput:
+    """Map a persisted profile to the stable public emergency projection."""
+
+    return PublicProfileOutput(
+        display_name=profile.display_name,
+        birth_year=profile.birth_year,
+        gender=profile.gender,
+        blood_type=profile.blood_type,
+        critical_allergies=list(profile.critical_allergies),
+        important_conditions=list(profile.important_conditions),
+        critical_medications=list(profile.critical_medications),
+        emergency_note=profile.emergency_note,
+        emergency_contacts=_public_contacts(profile),
+    )
 
 
 def profile_state(profile: ProfileDocument) -> ProfileState:

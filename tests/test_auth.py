@@ -215,7 +215,7 @@ def test_admin_routes_require_an_admin_role() -> None:
     assert normal_user.status_code == 403
     assert normal_user.json()["error"] == {
         "code": "auth.forbidden",
-        "message": "You do not have permission to perform this action.",
+        "message": "Bạn không có quyền thực hiện thao tác này.",
         "request_id": normal_user.json()["error"]["request_id"],
     }
 
@@ -324,7 +324,7 @@ def test_authentication_errors_are_safe_and_keep_request_ids() -> None:
     assert duplicate.status_code == 409
     assert duplicate.json()["error"] == {
         "code": "auth.email_already_registered",
-        "message": "An account with this email already exists.",
+        "message": "Email này đã được đăng ký.",
         "request_id": "auth-request-1",
     }
     assert unknown.status_code == wrong_password.status_code == 401

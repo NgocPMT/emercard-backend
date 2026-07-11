@@ -82,6 +82,35 @@ async def test_real_mongo_profile_upsert_has_one_profile_per_user(mongo_context)
 
 @pytest.mark.mongo
 @pytest.mark.asyncio
+async def test_real_mongo_profile_replace_preserves_legacy_public_access(mongo_context) -> None:
+    database, settings = mongo_context
+    users = UserRepository(database, settings)
+    profiles = ProfileRepository(database, settings)
+    user = await users.create(email="replace@example.com", password_hash="argon2-hash")
+    await profiles.upsert_for_user(
+        user_id=user.id,
+        profile=ProfileUpsertInput(display_name="Before", emergency_contacts=[]),
+    )
+    published = await profiles.publish(user_id=user.id)
+    assert published is not None
+    created_at = published.created_at
+    token = published.public_access.token
+
+    replaced = await profiles.replace_for_user(
+        user_id=user.id,
+        profile=ProfileUpsertInput(display_name="After", emergency_contacts=[]),
+    )
+
+    assert replaced is not None
+    assert replaced.display_name == "After"
+    assert replaced.created_at == created_at
+    assert replaced.public_access.token == token
+    assert replaced.public_access.enabled is True
+    assert replaced.updated_at >= created_at
+
+
+@pytest.mark.mongo
+@pytest.mark.asyncio
 async def test_real_mongo_public_token_state_transitions_and_index(mongo_context) -> None:
     database, settings = mongo_context
     users = UserRepository(database, settings)
