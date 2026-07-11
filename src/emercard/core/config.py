@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     mongodb_users_collection: str = "users"
     mongodb_profiles_collection: str = "medical_profiles"
     mongodb_cards_collection: str = "cards"
+    mongodb_custody_events_collection: str = "card_custody_events"
+    mongodb_idempotency_collection: str = "idempotency_keys"
     mongodb_test_database_prefix: str = "emercard_test"
     mongodb_index_initialization_mode: IndexInitializationMode = "disabled"
 
@@ -53,6 +55,7 @@ class Settings(BaseSettings):
     public_link_token_bytes: Annotated[int, Field(ge=16, le=128)] = 32
     public_link_route_prefix: str = "/p"
     public_link_explicit_publication: bool = True
+    public_card_base_url: str = "http://localhost:8000/e"
 
     # Reserved for the authentication stage; no authentication is implemented here.
     auth_secret: SecretStr | None = None
@@ -93,6 +96,8 @@ class Settings(BaseSettings):
         "mongodb_users_collection",
         "mongodb_profiles_collection",
         "mongodb_cards_collection",
+        "mongodb_custody_events_collection",
+        "mongodb_idempotency_collection",
         "mongodb_test_database_prefix",
         "auth_cookie_name",
     )
@@ -114,6 +119,17 @@ class Settings(BaseSettings):
         parsed = urlparse(normalized)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("frontend_base_url must be an absolute http(s) URL")
+        return normalized
+
+    @field_validator("public_card_base_url")
+    @classmethod
+    def validate_public_card_base_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("public_card_base_url must be an absolute http(s) URL")
+        if parsed.query or parsed.fragment:
+            raise ValueError("public_card_base_url must not contain a query or fragment")
         return normalized
 
     @field_validator("auth_cookie_domain")

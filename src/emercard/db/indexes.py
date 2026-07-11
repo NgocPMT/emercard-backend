@@ -11,12 +11,17 @@ PROFILES_USER_INDEX = "medical_profiles_user_unique"
 PROFILES_PUBLIC_TOKEN_INDEX = "medical_profiles_public_token_unique"
 CARDS_SERIAL_INDEX = "cards_serial_unique"
 CARDS_TOKEN_HASH_INDEX = "cards_token_hash_unique"
+CARDS_TOKEN_REVISION_INDEX = "cards_token_revision"
 CARDS_OWNER_INDEX = "cards_owner"
 CARDS_STATUS_INDEX = "cards_status"
 CARDS_OWNER_CURRENT_INDEX = "cards_owner_current"
 CARDS_OWNER_STATUS_INDEX = "cards_owner_status"
 CARDS_REPLACES_INDEX = "cards_replaces"
 CARDS_REPLACEMENT_INDEX = "cards_replacement"
+CARDS_ENCODING_INDEX = "cards_encoding_state"
+CUSTODY_EVENT_CARD_INDEX = "card_custody_events_card_created"
+CUSTODY_EVENT_OWNER_INDEX = "card_custody_events_owner_created"
+IDEMPOTENCY_KEY_INDEX = "idempotency_keys_operation_unique"
 
 
 def collection_indexes(settings: Settings) -> dict[str, list[IndexModel]]:
@@ -45,7 +50,13 @@ def collection_indexes(settings: Settings) -> dict[str, list[IndexModel]]:
         ],
         settings.mongodb_cards_collection: [
             IndexModel([("serial", ASCENDING)], name=CARDS_SERIAL_INDEX, unique=True),
-            IndexModel([("token_hash", ASCENDING)], name=CARDS_TOKEN_HASH_INDEX, unique=True),
+            IndexModel(
+                [("token_hash", ASCENDING)],
+                name=CARDS_TOKEN_HASH_INDEX,
+                unique=True,
+                partialFilterExpression={"token_hash": {"$type": "string"}},
+            ),
+            IndexModel([("token_revision", ASCENDING)], name=CARDS_TOKEN_REVISION_INDEX),
             IndexModel([("owner_id", ASCENDING)], name=CARDS_OWNER_INDEX),
             IndexModel([("status", ASCENDING)], name=CARDS_STATUS_INDEX),
             IndexModel(
@@ -58,6 +69,27 @@ def collection_indexes(settings: Settings) -> dict[str, list[IndexModel]]:
             ),
             IndexModel([("replaces_card_id", ASCENDING)], name=CARDS_REPLACES_INDEX),
             IndexModel([("replacement_card_id", ASCENDING)], name=CARDS_REPLACEMENT_INDEX),
+            IndexModel(
+                [("encoding_verified_at", ASCENDING), ("provisioned_at", ASCENDING)],
+                name=CARDS_ENCODING_INDEX,
+            ),
+        ],
+        settings.mongodb_custody_events_collection: [
+            IndexModel(
+                [("card_id", ASCENDING), ("created_at", ASCENDING)],
+                name=CUSTODY_EVENT_CARD_INDEX,
+            ),
+            IndexModel(
+                [("previous_owner_id", ASCENDING), ("created_at", ASCENDING)],
+                name=CUSTODY_EVENT_OWNER_INDEX,
+            ),
+        ],
+        settings.mongodb_idempotency_collection: [
+            IndexModel(
+                [("operation_key", ASCENDING)],
+                name=IDEMPOTENCY_KEY_INDEX,
+                unique=True,
+            ),
         ],
     }
 

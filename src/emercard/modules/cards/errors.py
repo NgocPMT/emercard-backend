@@ -29,6 +29,30 @@ class CardAlreadyAssignedError(CardError):
     """The card is already assigned or otherwise owned."""
 
 
+class CardLinkAlreadyProvisionedError(CardError):
+    """The card already has a link or cannot be provisioned in its state."""
+
+
+class CardEncodingNotVerifiedError(CardError):
+    """The card has not passed physical encoding verification."""
+
+
+class CardEncodingMismatchError(CardError):
+    """The read-back public link does not match the current card token."""
+
+
+class CardAssignmentTargetInvalidError(CardError):
+    """The requested account cannot receive an administrative card assignment."""
+
+
+class CardReassignmentNotAllowedError(CardError):
+    """The card cannot be corrected after issuance or activation."""
+
+
+class CardAlreadyIssuedError(CardError):
+    """The card has already left EmerCard custody."""
+
+
 class CardOwnershipMismatchError(CardError):
     """The requested card is not owned by the expected user."""
 

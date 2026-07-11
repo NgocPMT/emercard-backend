@@ -4,6 +4,7 @@ import pytest
 
 from emercard.core.config import Settings
 from emercard.db.indexes import (
+    CARDS_ENCODING_INDEX,
     CARDS_OWNER_CURRENT_INDEX,
     CARDS_OWNER_INDEX,
     CARDS_OWNER_STATUS_INDEX,
@@ -12,6 +13,10 @@ from emercard.db.indexes import (
     CARDS_SERIAL_INDEX,
     CARDS_STATUS_INDEX,
     CARDS_TOKEN_HASH_INDEX,
+    CARDS_TOKEN_REVISION_INDEX,
+    CUSTODY_EVENT_CARD_INDEX,
+    CUSTODY_EVENT_OWNER_INDEX,
+    IDEMPOTENCY_KEY_INDEX,
     PROFILES_PUBLIC_TOKEN_INDEX,
     PROFILES_USER_INDEX,
     USERS_EMAIL_INDEX,
@@ -33,14 +38,20 @@ class FakeDatabase:
                 [
                     CARDS_SERIAL_INDEX,
                     CARDS_TOKEN_HASH_INDEX,
+                    CARDS_TOKEN_REVISION_INDEX,
                     CARDS_OWNER_INDEX,
                     CARDS_STATUS_INDEX,
                     CARDS_OWNER_CURRENT_INDEX,
                     CARDS_OWNER_STATUS_INDEX,
                     CARDS_REPLACES_INDEX,
                     CARDS_REPLACEMENT_INDEX,
+                    CARDS_ENCODING_INDEX,
                 ]
             ),
+            "card_custody_events": FakeCollection(
+                [CUSTODY_EVENT_CARD_INDEX, CUSTODY_EVENT_OWNER_INDEX]
+            ),
+            "idempotency_keys": FakeCollection([IDEMPOTENCY_KEY_INDEX]),
         }
 
     def __getitem__(self, name: str) -> FakeCollection:
@@ -60,13 +71,17 @@ async def test_initialize_indexes_is_explicit_and_uses_required_collections() ->
         "cards": [
             CARDS_SERIAL_INDEX,
             CARDS_TOKEN_HASH_INDEX,
+            CARDS_TOKEN_REVISION_INDEX,
             CARDS_OWNER_INDEX,
             CARDS_STATUS_INDEX,
             CARDS_OWNER_CURRENT_INDEX,
             CARDS_OWNER_STATUS_INDEX,
             CARDS_REPLACES_INDEX,
             CARDS_REPLACEMENT_INDEX,
+            CARDS_ENCODING_INDEX,
         ],
+        "card_custody_events": [CUSTODY_EVENT_CARD_INDEX, CUSTODY_EVENT_OWNER_INDEX],
+        "idempotency_keys": [IDEMPOTENCY_KEY_INDEX],
     }
     database.collections["users"].create_indexes.assert_awaited_once()
     database.collections["medical_profiles"].create_indexes.assert_awaited_once()
@@ -76,6 +91,10 @@ async def test_initialize_indexes_is_explicit_and_uses_required_collections() ->
         "public_access.token": {"$type": "string"}
     }
     card_indexes = database.collections["cards"].create_indexes.await_args.args[0]
+    token_index = next(
+        index for index in card_indexes if index.document["name"] == CARDS_TOKEN_HASH_INDEX
+    )
+    assert token_index.document["partialFilterExpression"] == {"token_hash": {"$type": "string"}}
     assert not any(
         index.document.get("unique") and "owner_id" in str(index.document["key"])
         for index in card_indexes

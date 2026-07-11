@@ -27,12 +27,27 @@
 
 ## Authorization and transport
 
-- Future admin routes must depend on the shared admin authorization boundary. Authenticated normal users receive `403 auth.forbidden`; unauthenticated requests receive `401 auth.authentication_required`. No admin feature routes are implemented yet.
+- Admin card routes use the shared admin authorization boundary. Authenticated normal users receive `403 auth.forbidden`; unauthenticated requests receive `401 auth.authentication_required`.
 - Browser calls from the exact configured frontend origin must use `fetch(..., { credentials: "include" })`; local development uses `http://localhost:4321`.
 - Phase 1 logout is stateless: a copied JWT remains valid until its 15-minute expiry. Do not claim immediate revocation.
 - Errors contain a stable error code, Vietnamese human-readable message, optional sanitized Vietnamese validation details, and `request_id`. Frontend integrations should branch on `error.code`, not translated text.
 - CORS uses the configured exact origin allowlist with credentials enabled; wildcard origins and configured cookie domains are rejected by settings.
 
-## Card boundary
+## Admin cards
 
-Card persistence is an internal backend foundation only. See [`card-persistence.md`](card-persistence.md). No card HTTP routes or anonymous lookup are exposed yet.
+Every route below requires an authenticated administrator:
+
+- `POST /api/v1/admin/cards` creates a blank serial-only card and requires `Idempotency-Key`.
+- `POST /api/v1/admin/cards/{cardId}/provision-link` returns the raw public token and URL once with `Cache-Control: no-store`.
+- `POST /api/v1/admin/cards/{cardId}/reprovision-link` returns a replacement URL once before verification.
+- `POST /api/v1/admin/cards/{cardId}/confirm-encoding` verifies a read-back `public_url`.
+- `GET /api/v1/admin/users/lookup?email=` returns a safe account summary without medical fields.
+- `POST /api/v1/admin/cards/{cardId}/assign` assigns a verified card using a user ID.
+- `POST /api/v1/admin/cards/{cardId}/reassign` accepts `new_owner_id` and one of `assignment_error`, `recipient_changed`, or `internal_correction` before issuance.
+- `POST /api/v1/admin/cards/{cardId}/unassign`, `/issue`, and `/void` perform the corresponding custody operation.
+- `GET /api/v1/admin/cards` supports status, owner, serial, current, derived encoding-state, issued, limit, and cursor filters.
+- `GET /api/v1/admin/cards/{cardId}` returns safe card metadata and a safe owner summary.
+
+Safe card responses never include raw tokens, token hashes, public URLs, medical-profile data, cookies, or authentication secrets. Custody history is persisted internally and is not currently included in card detail. User activation, anonymous lookup, and replacement HTTP routes remain deferred.
+
+See [`card-persistence.md`](card-persistence.md) for lifecycle gates, idempotency, event history, and manual NFC/QR encoding responsibilities.

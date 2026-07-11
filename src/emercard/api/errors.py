@@ -8,6 +8,20 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from emercard.modules.auth.exceptions import AuthError
+from emercard.modules.cards.errors import (
+    CardAlreadyAssignedError,
+    CardAlreadyIssuedError,
+    CardAssignmentTargetInvalidError,
+    CardEncodingMismatchError,
+    CardEncodingNotVerifiedError,
+    CardError,
+    CardInvalidTransitionError,
+    CardLinkAlreadyProvisionedError,
+    CardNotFoundError,
+    CardReassignmentNotAllowedError,
+    CardTerminalStateError,
+    CardUserNotFoundError,
+)
 from emercard.modules.profiles.exceptions import ProfileError
 
 
@@ -45,6 +59,53 @@ def profile_exception_handler(request: Request, exc: ProfileError) -> JSONRespon
     return JSONResponse(
         status_code=exc.status_code,
         content=error_payload(request, code=exc.code, message=exc.message),
+    )
+
+
+def card_exception_handler(request: Request, exc: CardError) -> JSONResponse:
+    mapping: dict[type[CardError], tuple[int, str, str]] = {
+        CardNotFoundError: (404, "card.not_found", "Không tìm thấy thẻ."),
+        CardUserNotFoundError: (404, "user.not_found", "Không tìm thấy người dùng."),
+        CardAssignmentTargetInvalidError: (
+            409,
+            "card.assignment_target_invalid",
+            "Tài khoản không đủ điều kiện nhận thẻ.",
+        ),
+        CardAlreadyAssignedError: (409, "card.already_assigned", "Thẻ đã được gán."),
+        CardAlreadyIssuedError: (409, "card.already_issued", "Thẻ đã được bàn giao."),
+        CardLinkAlreadyProvisionedError: (
+            409,
+            "card.link_already_provisioned",
+            "Liên kết thẻ không thể cấp lại ở trạng thái hiện tại.",
+        ),
+        CardEncodingNotVerifiedError: (
+            409,
+            "card.encoding_not_verified",
+            "Thẻ chưa được xác minh mã hóa.",
+        ),
+        CardReassignmentNotAllowedError: (
+            409,
+            "card.reassignment_not_allowed",
+            "Không thể thay đổi gán thẻ ở trạng thái hiện tại.",
+        ),
+        CardTerminalStateError: (409, "card.terminal", "Thẻ đã ở trạng thái kết thúc."),
+        CardInvalidTransitionError: (
+            409,
+            "card.invalid_state_transition",
+            "Chuyển trạng thái thẻ không hợp lệ.",
+        ),
+        CardEncodingMismatchError: (
+            422,
+            "card.encoding_mismatch",
+            "Liên kết đọc lại không khớp với thẻ.",
+        ),
+    }
+    status_code, code, message = mapping.get(
+        type(exc), (503, "card.service_unavailable", "Dịch vụ thẻ tạm thời không khả dụng.")
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content=error_payload(request, code=code, message=message),
     )
 
 

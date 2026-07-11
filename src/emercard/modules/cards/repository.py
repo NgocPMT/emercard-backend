@@ -8,7 +8,7 @@ from typing import Any, cast
 
 from bson.errors import InvalidId
 from bson.objectid import ObjectId
-from pymongo import ReturnDocument
+from pymongo import ASCENDING, ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from emercard.core.config import Settings
@@ -36,20 +36,22 @@ class CardRepository:
         self,
         *,
         serial: str,
-        token_hash: str,
+        token_hash: str | None,
         replaces_card_id: ObjectId | str | None = None,
         now: datetime | None = None,
         session: Any | None = None,
     ) -> CardDocument:
         timestamp = now or utc_now()
         canonical_serial = normalize_serial(serial)
-        canonical_hash = validate_token_hash(token_hash)
+        canonical_hash = validate_token_hash(token_hash) if token_hash is not None else None
         replacement_id = _optional_object_id(replaces_card_id)
         document = CardDocument(
             _id=ObjectId(),
             serial=canonical_serial,
             owner_id=None,
             token_hash=canonical_hash,
+            token_revision=1 if canonical_hash is not None else 0,
+            provisioned_at=timestamp if canonical_hash is not None else None,
             status=CardStatus.UNASSIGNED,
             is_current=False,
             replaces_card_id=replacement_id,
@@ -62,6 +64,22 @@ class CardRepository:
         except DuplicateKeyError as error:
             raise _identity_conflict(error) from error
         return document
+
+    async def create_blank_card(
+        self,
+        *,
+        serial: str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument:
+        """Insert inventory identity without generating public-link material."""
+
+        return await self.create_unassigned_card(
+            serial=serial,
+            token_hash=None,
+            now=now,
+            session=session,
+        )
 
     async def find_by_id(
         self, card_id: ObjectId | str, *, session: Any | None = None
@@ -120,6 +138,150 @@ class CardRepository:
         )
         return _cards(await cursor.to_list(length=None))
 
+    async def list_admin(
+        self,
+        *,
+        status: CardStatus | None = None,
+        owner_id: ObjectId | str | None = None,
+        serial: str | None = None,
+        is_current: bool | None = None,
+        encoding_state: str | None = None,
+        issued: bool | None = None,
+        limit: int = 50,
+        after: tuple[datetime, ObjectId] | None = None,
+        session: Any | None = None,
+    ) -> list[CardDocument]:
+        """List inventory using stable creation-time and ID ordering."""
+
+        query: dict[str, Any] = {}
+        if status is not None:
+            query["status"] = status
+        if owner_id is not None:
+            query["owner_id"] = _object_id(owner_id)
+        if serial is not None:
+            query["serial"] = normalize_serial(serial)
+        if is_current is not None:
+            query["is_current"] = is_current
+        if issued is not None:
+            query["issued_at"] = {"$type": "date"} if issued else None
+        if encoding_state == "not_provisioned":
+            query["token_hash"] = None
+        elif encoding_state == "link_generated":
+            query["token_hash"] = {"$type": "string"}
+            query["encoding_verified_at"] = None
+        elif encoding_state == "verified":
+            query["encoding_verified_at"] = {"$type": "date"}
+        if after is not None:
+            created_at, card_id = after
+            query["$or"] = [
+                {"created_at": {"$gt": created_at}},
+                {"created_at": created_at, "_id": {"$gt": card_id}},
+            ]
+        cursor = self._collection.find(query, **_session_kwargs(session)).sort(
+            [("created_at", ASCENDING), ("_id", ASCENDING)]
+        )
+        return _cards(await cursor.to_list(length=limit + 1))
+
+    async def provision_link(
+        self,
+        *,
+        card_id: ObjectId | str,
+        token_hash: str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument | None:
+        identifier = _object_id(card_id)
+        canonical_hash = validate_token_hash(token_hash)
+        timestamp = now or utc_now()
+        document = await self._collection.find_one_and_update(
+            {
+                "_id": identifier,
+                "status": CardStatus.UNASSIGNED,
+                "owner_id": None,
+                "token_hash": None,
+                "encoding_verified_at": None,
+                "issued_at": None,
+            },
+            {
+                "$set": {
+                    "token_hash": canonical_hash,
+                    "provisioned_at": timestamp,
+                    "updated_at": timestamp,
+                },
+                "$inc": {"token_revision": 1},
+            },
+            return_document=ReturnDocument.AFTER,
+            **_session_kwargs(session),
+        )
+        return _card(document)
+
+    async def reprovision_link(
+        self,
+        *,
+        card_id: ObjectId | str,
+        token_hash: str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument | None:
+        identifier = _object_id(card_id)
+        canonical_hash = validate_token_hash(token_hash)
+        timestamp = now or utc_now()
+        document = await self._collection.find_one_and_update(
+            {
+                "_id": identifier,
+                "status": CardStatus.UNASSIGNED,
+                "owner_id": None,
+                "token_hash": {"$type": "string"},
+                "encoding_verified_at": None,
+                "issued_at": None,
+            },
+            {
+                "$set": {
+                    "token_hash": canonical_hash,
+                    "provisioned_at": timestamp,
+                    "updated_at": timestamp,
+                },
+                "$inc": {"token_revision": 1},
+            },
+            return_document=ReturnDocument.AFTER,
+            **_session_kwargs(session),
+        )
+        return _card(document)
+
+    async def confirm_encoding(
+        self,
+        *,
+        card_id: ObjectId | str,
+        token_hash: str,
+        admin_id: ObjectId | str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument | None:
+        identifier = _object_id(card_id)
+        verifier = _object_id(admin_id)
+        canonical_hash = validate_token_hash(token_hash)
+        timestamp = now or utc_now()
+        document = await self._collection.find_one_and_update(
+            {
+                "_id": identifier,
+                "status": CardStatus.UNASSIGNED,
+                "owner_id": None,
+                "token_hash": canonical_hash,
+                "encoding_verified_at": None,
+                "issued_at": None,
+            },
+            {
+                "$set": {
+                    "encoding_verified_at": timestamp,
+                    "encoded_by_admin_id": verifier,
+                    "updated_at": timestamp,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+            **_session_kwargs(session),
+        )
+        return _card(document)
+
     async def assign_to_user(
         self,
         *,
@@ -139,6 +301,164 @@ class CardRepository:
                     "status": CardStatus.ASSIGNED,
                     "is_current": True,
                     "assigned_at": timestamp,
+                    "updated_at": timestamp,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+            **_session_kwargs(session),
+        )
+        return _card(document)
+
+    async def assign_verified_to_user(
+        self,
+        *,
+        card_id: ObjectId | str,
+        user_id: ObjectId | str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument | None:
+        identifier = _object_id(card_id)
+        owner_id = _object_id(user_id)
+        timestamp = now or utc_now()
+        document = await self._collection.find_one_and_update(
+            {
+                "_id": identifier,
+                "status": CardStatus.UNASSIGNED,
+                "owner_id": None,
+                "token_hash": {"$type": "string"},
+                "encoding_verified_at": {"$type": "date"},
+                "issued_at": None,
+            },
+            {
+                "$set": {
+                    "owner_id": owner_id,
+                    "status": CardStatus.ASSIGNED,
+                    "is_current": True,
+                    "assigned_at": timestamp,
+                    "updated_at": timestamp,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+            **_session_kwargs(session),
+        )
+        return _card(document)
+
+    async def reassign_before_issue(
+        self,
+        *,
+        card_id: ObjectId | str,
+        new_owner_id: ObjectId | str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument | None:
+        identifier = _object_id(card_id)
+        owner_id = _object_id(new_owner_id)
+        timestamp = now or utc_now()
+        document = await self._collection.find_one_and_update(
+            {
+                "_id": identifier,
+                "status": CardStatus.ASSIGNED,
+                "is_current": True,
+                "owner_id": {"$type": "objectId"},
+                "encoding_verified_at": {"$type": "date"},
+                "issued_at": None,
+                "activated_at": None,
+            },
+            {"$set": {"owner_id": owner_id, "assigned_at": timestamp, "updated_at": timestamp}},
+            return_document=ReturnDocument.AFTER,
+            **_session_kwargs(session),
+        )
+        return _card(document)
+
+    async def unassign_before_issue(
+        self,
+        *,
+        card_id: ObjectId | str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument | None:
+        identifier = _object_id(card_id)
+        timestamp = now or utc_now()
+        document = await self._collection.find_one_and_update(
+            {
+                "_id": identifier,
+                "status": CardStatus.ASSIGNED,
+                "is_current": True,
+                "owner_id": {"$type": "objectId"},
+                "encoding_verified_at": {"$type": "date"},
+                "issued_at": None,
+                "activated_at": None,
+            },
+            {
+                "$set": {
+                    "owner_id": None,
+                    "status": CardStatus.UNASSIGNED,
+                    "is_current": False,
+                    "assigned_at": None,
+                    "updated_at": timestamp,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+            **_session_kwargs(session),
+        )
+        return _card(document)
+
+    async def issue(
+        self,
+        *,
+        card_id: ObjectId | str,
+        admin_id: ObjectId | str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument | None:
+        identifier = _object_id(card_id)
+        issuer = _object_id(admin_id)
+        timestamp = now or utc_now()
+        document = await self._collection.find_one_and_update(
+            {
+                "_id": identifier,
+                "status": CardStatus.ASSIGNED,
+                "is_current": True,
+                "owner_id": {"$type": "objectId"},
+                "encoding_verified_at": {"$type": "date"},
+                "issued_at": None,
+                "activated_at": None,
+            },
+            {
+                "$set": {
+                    "issued_at": timestamp,
+                    "issued_by_admin_id": issuer,
+                    "updated_at": timestamp,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+            **_session_kwargs(session),
+        )
+        return _card(document)
+
+    async def void_before_issue(
+        self,
+        *,
+        card_id: ObjectId | str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument | None:
+        identifier = _object_id(card_id)
+        timestamp = now or utc_now()
+        document = await self._collection.find_one_and_update(
+            {
+                "_id": identifier,
+                "status": {"$in": [CardStatus.UNASSIGNED, CardStatus.ASSIGNED]},
+                "issued_at": None,
+                "activated_at": None,
+            },
+            {
+                "$set": {
+                    "owner_id": None,
+                    "status": CardStatus.VOID,
+                    "is_current": False,
+                    "assigned_at": None,
+                    "voided_at": timestamp,
                     "updated_at": timestamp,
                 }
             },
@@ -256,7 +576,7 @@ class CardRepository:
         """Run a repository operation in a MongoDB transaction."""
 
         client = self._database.client
-        async with await client.start_session() as session, session.start_transaction():
+        async with client.start_session() as session, await session.start_transaction():
             return await operation(session)
 
 

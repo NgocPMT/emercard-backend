@@ -18,7 +18,7 @@ Initialize the Phase 1 collections and indexes explicitly against the configured
 uv run python -m emercard.db.initialize
 ```
 
-The initialization command is idempotent and never drops or rebuilds data. Run it twice during local verification. Set `EMERCARD_MONGODB_INDEX_INITIALIZATION_MODE=startup` only when deployment should ensure indexes during application startup; incompatible existing index options must fail visibly.
+The initialization command is idempotent and never drops or rebuilds data. Run it twice during local verification. It initializes users, profiles, cards, custody-event, and idempotency indexes. Set `EMERCARD_MONGODB_INDEX_INITIALIZATION_MODE=startup` only when deployment should ensure indexes during application startup; incompatible existing index options must fail visibly.
 
 ## MongoDB integration
 
@@ -28,7 +28,7 @@ For the isolated real-MongoDB repository suite, provide a disposable replica-set
 EMERCARD_TEST_MONGODB_URI=<disposable-replica-set-uri> uv run pytest -m mongo
 ```
 
-Replacement transaction coverage requires a replica-set-capable MongoDB. Card-specific invariants are documented in [`card-persistence.md`](card-persistence.md).
+Replacement and custody-event transaction coverage requires a replica-set-capable MongoDB. Card-specific invariants, admin gates, safe output rules, and manual NFC/QR verification are documented in [`card-persistence.md`](card-persistence.md).
 
 ## Smoke checks
 

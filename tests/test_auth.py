@@ -220,6 +220,26 @@ def test_admin_routes_require_an_admin_role() -> None:
     }
 
 
+def test_admin_card_inventory_routes_require_admin_role() -> None:
+    repository = InMemoryUserRepository()
+    with make_client(repository) as client:
+        missing = client.get("/api/v1/admin/cards")
+        client.post(
+            "/api/v1/auth/register",
+            json={"email": "user@example.com", "password": "password-123"},
+        )
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "user@example.com", "password": "password-123"},
+        )
+        normal_user = client.get("/api/v1/admin/cards")
+
+    assert missing.status_code == 401
+    assert missing.json()["error"]["code"] == "auth.authentication_required"
+    assert normal_user.status_code == 403
+    assert normal_user.json()["error"]["code"] == "auth.forbidden"
+
+
 def test_admin_role_can_access_admin_routes() -> None:
     repository = InMemoryUserRepository()
     admin = UserDocument(

@@ -20,6 +20,7 @@ class CardStatus(StrEnum):
     DISABLED = "disabled"
     LOST = "lost"
     REPLACED = "replaced"
+    VOID = "void"
 
 
 class CardModel(BaseModel):
@@ -32,14 +33,21 @@ class CardDocument(CardModel):
     id: ObjectIdValue = Field(alias="_id")
     serial: str = Field(min_length=20, max_length=24)
     owner_id: ObjectIdValue | None = None
-    token_hash: str = Field(min_length=67, max_length=67)
+    token_hash: str | None = Field(default=None, min_length=67, max_length=67)
+    token_revision: int = Field(default=0, ge=0)
     status: CardStatus
     is_current: bool
+    provisioned_at: UtcDateTime | None = None
+    encoding_verified_at: UtcDateTime | None = None
+    encoded_by_admin_id: ObjectIdValue | None = None
     assigned_at: UtcDateTime | None = None
     activated_at: UtcDateTime | None = None
     disabled_at: UtcDateTime | None = None
     lost_at: UtcDateTime | None = None
     replaced_at: UtcDateTime | None = None
+    issued_at: UtcDateTime | None = None
+    issued_by_admin_id: ObjectIdValue | None = None
+    voided_at: UtcDateTime | None = None
     replaces_card_id: ObjectIdValue | None = None
     replacement_card_id: ObjectIdValue | None = None
     created_at: UtcDateTime
@@ -52,8 +60,8 @@ class CardDocument(CardModel):
 
     @field_validator("token_hash")
     @classmethod
-    def validate_hash(cls, value: str) -> str:
-        return validate_token_hash(value)
+    def validate_hash(cls, value: str | None) -> str | None:
+        return validate_token_hash(value) if value is not None else None
 
     def __repr__(self) -> str:
         """Keep the internal token hash out of logs and diagnostic reprs."""
@@ -74,18 +82,56 @@ class CardDocument(CardModel):
             CardStatus.ACTIVE,
             CardStatus.DISABLED,
         }
-        terminal_statuses = {CardStatus.LOST, CardStatus.REPLACED}
         if self.status is CardStatus.UNASSIGNED:
             if self.owner_id is not None or self.is_current:
                 raise ValueError("unassigned cards must be ownerless and non-current")
+        elif self.status is CardStatus.VOID:
+            if self.is_current:
+                raise ValueError("void cards must be non-current")
         elif self.status in operational_statuses:
             if self.owner_id is None or not self.is_current:
                 raise ValueError("assigned operational cards must have an owner and be current")
-        elif self.status in terminal_statuses and (self.owner_id is None or self.is_current):
-            raise ValueError("terminal cards must have an owner and be non-current")
+        elif self.status in {CardStatus.LOST, CardStatus.REPLACED} and (
+            self.owner_id is None or self.is_current
+        ):
+            raise ValueError("lost and replaced cards must have an owner and be non-current")
+        if self.token_hash is None:
+            if self.token_revision != 0 or self.provisioned_at is not None:
+                raise ValueError("unprovisioned cards cannot have provisioning metadata")
+            if self.encoding_verified_at is not None or self.encoded_by_admin_id is not None:
+                raise ValueError("unprovisioned cards cannot have encoding metadata")
+        elif self.token_revision == 0 and self.provisioned_at is None:
+            # Cards created by the Phase 1 foundation predate provisioning metadata.
+            # They remain readable but are not eligible for the new admin custody gates.
+            pass
+        elif self.token_revision < 1 or self.provisioned_at is None:
+            raise ValueError("provisioned cards require a revision and timestamp")
+        if self.encoding_verified_at is None and self.encoded_by_admin_id is not None:
+            raise ValueError("encoding verifier requires a verification timestamp")
+        if self.encoding_verified_at is not None and self.encoded_by_admin_id is None:
+            raise ValueError("encoding verification requires an admin ID")
+        if self.status is CardStatus.VOID and self.issued_at is not None:
+            raise ValueError("void cards cannot be issued")
+        if self.issued_at is not None and self.owner_id is None:
+            raise ValueError("issued cards must have an owner")
         if self.id == self.replaces_card_id or self.id == self.replacement_card_id:
             raise ValueError("replacement references cannot point to the same card")
         return self
+
+
+@dataclass(frozen=True, repr=False)
+class CardLinkProvisioningResult:
+    """One-time admin result containing a raw token and derived URL."""
+
+    card: CardDocument
+    public_token: str
+    public_url: str
+
+    def __repr__(self) -> str:
+        return (
+            "CardLinkProvisioningResult("
+            f"card={self.card!r}, public_token=<redacted>, public_url=<redacted>)"
+        )
 
 
 @dataclass(frozen=True, repr=False)

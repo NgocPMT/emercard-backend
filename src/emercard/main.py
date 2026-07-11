@@ -12,6 +12,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from emercard.api.errors import (
     auth_exception_handler,
+    card_exception_handler,
     http_exception_handler,
     profile_exception_handler,
     unhandled_exception_handler,
@@ -22,6 +23,7 @@ from emercard.api.routes import build_api_router, build_infrastructure_router
 from emercard.core.config import Settings, get_settings
 from emercard.db import Database, initialize_indexes
 from emercard.modules.auth.exceptions import AuthError
+from emercard.modules.cards.errors import CardError
 from emercard.modules.profiles.exceptions import ProfileError
 
 
@@ -42,6 +44,10 @@ def create_app(
     database: Database | None = None,
     auth_repository: Any | None = None,
     profile_repository: Any | None = None,
+    card_repository: Any | None = None,
+    card_user_repository: Any | None = None,
+    idempotency_repository: Any | None = None,
+    custody_event_repository: Any | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     logging.getLogger("emercard.request").setLevel(app_settings.log_level)
@@ -57,6 +63,14 @@ def create_app(
         app.state.auth_repository = auth_repository
     if profile_repository is not None:
         app.state.profile_repository = profile_repository
+    if card_repository is not None:
+        app.state.card_repository = card_repository
+    if card_user_repository is not None:
+        app.state.card_user_repository = card_user_repository
+    if idempotency_repository is not None:
+        app.state.idempotency_repository = idempotency_repository
+    if custody_event_repository is not None:
+        app.state.custody_event_repository = custody_event_repository
 
     app.add_middleware(
         CORSMiddleware,
@@ -68,6 +82,7 @@ def create_app(
     )
     app.middleware("http")(request_context_middleware)
     app.add_exception_handler(AuthError, cast(Any, auth_exception_handler))
+    app.add_exception_handler(CardError, cast(Any, card_exception_handler))
     app.add_exception_handler(ProfileError, cast(Any, profile_exception_handler))
     app.add_exception_handler(StarletteHTTPException, cast(Any, http_exception_handler))
     app.add_exception_handler(RequestValidationError, cast(Any, validation_exception_handler))

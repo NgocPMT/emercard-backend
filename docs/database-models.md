@@ -9,6 +9,8 @@ These Phase 1 feature collections are used:
 - `users`
 - `medical_profiles`
 - `cards`
+- `card_custody_events`
+- `idempotency_keys`
 
 `medical_profiles.user_id` is unique, enforcing one profile per account. Public-link state remains embedded in the profile for legacy compatibility; there is no separate legacy link collection. The card persistence and token-ownership contract is documented in [`card-persistence.md`](card-persistence.md).
 
@@ -78,9 +80,13 @@ Required user/profile indexes are:
 - unique `medical_profiles.user_id`;
 - unique sparse/partial `medical_profiles.public_access.token`, allowing profiles without a token.
 
-The `cards` indexes, lifecycle invariants, token-hash contract, and replacement transaction requirements are documented in [`card-persistence.md`](card-persistence.md).
+The `cards`, `card_custody_events`, and `idempotency_keys` indexes, lifecycle invariants, token-hash contract, and replacement/custody transaction requirements are documented in [`card-persistence.md`](card-persistence.md).
 
 Initialization is idempotent and never drops or rebuilds data. The application may run it on startup only when configured; an explicit command is the deployment-safe default.
+
+## Admin card configuration
+
+`Settings.public_card_base_url` is the exact absolute URL prefix used to construct physical-card links, for example `https://app.emercard.id.vn/e`. It must not contain a query or fragment. `mongodb_custody_events_collection` and `mongodb_idempotency_collection` configure the operational collections for custody events and blank-card creation replay.
 
 ## Deferred decisions
 

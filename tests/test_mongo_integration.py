@@ -3,7 +3,6 @@
 import asyncio
 import os
 from unittest.mock import AsyncMock
-from uuid import uuid4
 
 import pytest
 from pymongo.errors import OperationFailure
@@ -27,6 +26,8 @@ from emercard.modules.cards import (
     CardRepository,
     CardSerialConflictError,
     CardService,
+    CustodyEventRepository,
+    generate_serial,
 )
 from emercard.modules.profiles import ProfileRepository, ProfileUpsertInput
 from emercard.modules.users import UserRepository
@@ -41,8 +42,9 @@ async def mongo_context():
     settings = Settings(
         environment="test",
         mongodb_uri=uri,
-        mongodb_database=f"emercard_test_{uuid4().hex}",
+        mongodb_database="emercard_test_integration",
         mongodb_index_initialization_mode="disabled",
+        mongodb_max_pool_size=5,
     )
     database = Database(settings)
     await database.start()
@@ -159,6 +161,67 @@ async def test_real_mongo_public_token_state_transitions_and_index(mongo_context
 
     index_info = await database[settings.mongodb_profiles_collection].index_information()
     assert PROFILES_PUBLIC_TOKEN_INDEX in index_info
+
+
+@pytest.mark.mongo
+@pytest.mark.asyncio
+async def test_real_mongo_blank_cards_allow_null_hashes_and_partial_token_index(
+    mongo_context,
+) -> None:
+    database, settings = mongo_context
+    cards = CardRepository(database, settings)
+
+    first = await cards.create_blank_card(serial=generate_serial())
+    second = await cards.create_blank_card(serial=generate_serial())
+    assert first.token_hash is None
+    assert second.token_hash is None
+
+    index_info = await database[settings.mongodb_cards_collection].index_information()
+    token_index = index_info[CARDS_TOKEN_HASH_INDEX]
+    assert token_index["unique"] is True
+    assert token_index["partialFilterExpression"] == {"token_hash": {"$type": "string"}}
+
+
+@pytest.mark.mongo
+@pytest.mark.asyncio
+async def test_real_mongo_custody_event_is_atomic_with_assignment(mongo_context) -> None:
+    database, settings = mongo_context
+    hello = await database.client.admin.command("hello")
+    if not hello.get("setName"):
+        pytest.skip("MongoDB transactions require a replica set")
+
+    users = UserRepository(database, settings)
+    cards = CardRepository(database, settings)
+    custody = CustodyEventRepository(database, settings)
+    owner = await users.create(email="custody-owner@example.com", password_hash="argon2-hash")
+    admin = await users.create(
+        email="custody-admin@example.com", password_hash="argon2-hash", role="admin"
+    )
+    service = CardService(
+        cards,
+        users,
+        public_card_base_url="https://app.example/e",
+        custody_event_repository=custody,
+    )
+
+    blank = await service.create_blank_card()
+    provisioned = await service.provision_link(card_id=blank.id)
+    await service.confirm_encoding(
+        card_id=blank.id,
+        public_url=provisioned.public_url,
+        admin_id=admin.id,
+    )
+    assigned = await service.assign_verified_to_user(
+        card_id=blank.id,
+        user_id=owner.id,
+        admin_id=admin.id,
+    )
+
+    assert assigned.owner_id == owner.id
+    events = await database[settings.mongodb_custody_events_collection].count_documents(
+        {"card_id": blank.id, "event_type": "assigned"}
+    )
+    assert events == 1
 
 
 @pytest.mark.mongo
