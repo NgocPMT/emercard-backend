@@ -5,6 +5,7 @@ from emercard.modules.users.models import (
     UserDocument,
     UserLoginInput,
     UserRegistrationInput,
+    UserRole,
     canonicalize_email,
 )
 from emercard.modules.users.repository import UserRepository
@@ -14,6 +15,7 @@ __all__ = [
     "UserDocument",
     "UserLoginInput",
     "UserRegistrationInput",
+    "UserRole",
     "canonicalize_email",
     "UserRepository",
 ]

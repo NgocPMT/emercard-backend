@@ -5,12 +5,17 @@ from datetime import datetime
 from typing import Protocol
 
 from emercard.core.config import Settings
-from emercard.db.repositories import InvalidIdentifierError, RepositoryConflictError
+from emercard.db.repositories import (
+    InvalidIdentifierError,
+    RepositoryConflictError,
+    RepositoryError,
+)
 from emercard.modules.auth.exceptions import (
     AuthenticationRequiredError,
     DuplicateEmailError,
     InvalidCredentialsError,
     InvalidSessionError,
+    RegistrationProvisioningError,
 )
 from emercard.modules.auth.security import (
     DUMMY_PASSWORD_HASH,
@@ -24,7 +29,12 @@ from emercard.modules.users.models import (
     UserDocument,
     UserLoginInput,
     UserRegistrationInput,
+    UserRole,
 )
+
+
+class ProfileRepositoryProtocol(Protocol):
+    async def ensure_for_user(self, *, user_id: str) -> object: ...
 
 
 class UserRepositoryProtocol(Protocol):
@@ -37,6 +47,7 @@ class UserRepositoryProtocol(Protocol):
         *,
         email: str,
         password_hash: str,
+        role: UserRole = "user",
         now: datetime | None = None,
     ) -> UserDocument: ...
 
@@ -50,8 +61,14 @@ class LoginResult:
 class AuthService:
     """Coordinate authentication without exposing persistence models to routes."""
 
-    def __init__(self, repository: UserRepositoryProtocol, settings: Settings) -> None:
+    def __init__(
+        self,
+        repository: UserRepositoryProtocol,
+        profile_repository: ProfileRepositoryProtocol,
+        settings: Settings,
+    ) -> None:
         self._repository = repository
+        self._profile_repository = profile_repository
         self._settings = settings
 
     async def register(self, request: UserRegistrationInput) -> CurrentUserOutput:
@@ -59,9 +76,14 @@ class AuthService:
             user = await self._repository.create(
                 email=request.email,
                 password_hash=hash_password(request.password),
+                role="user",
             )
         except RepositoryConflictError as error:
             raise DuplicateEmailError from error
+        try:
+            await self._profile_repository.ensure_for_user(user_id=str(user.id))
+        except RepositoryError as error:
+            raise RegistrationProvisioningError from error
         return _current_user_output(user)
 
     async def login(self, request: UserLoginInput) -> LoginResult:
@@ -94,6 +116,7 @@ def _current_user_output(user: UserDocument) -> CurrentUserOutput:
     return CurrentUserOutput(
         id=str(user.id),
         email=user.email,
+        role=user.role,
         created_at=user.created_at,
         updated_at=user.updated_at,
     )

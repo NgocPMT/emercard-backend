@@ -1,11 +1,13 @@
 """User persistence, input, and authenticated output models."""
 
 import re
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from emercard.core.types import ObjectIdValue, UtcDateTime
+
+UserRole = Literal["user", "admin"]
 
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -34,6 +36,7 @@ class UserDocument(UserModel):
     id: ObjectIdValue = Field(alias="_id")
     email: str = Field(min_length=3, max_length=254)
     password_hash: str = Field(min_length=1, max_length=512)
+    role: UserRole = "user"
     created_at: UtcDateTime
     updated_at: UtcDateTime
 
@@ -70,5 +73,6 @@ class CurrentUserOutput(UserModel):
 
     id: str
     email: str
+    role: UserRole
     created_at: UtcDateTime
     updated_at: UtcDateTime

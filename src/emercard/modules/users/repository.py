@@ -10,7 +10,7 @@ from pymongo.errors import DuplicateKeyError
 from emercard.core.config import Settings
 from emercard.core.types import utc_now
 from emercard.db.repositories import InvalidIdentifierError, RepositoryConflictError
-from emercard.modules.users.models import UserDocument, canonicalize_email
+from emercard.modules.users.models import UserDocument, UserRole, canonicalize_email
 
 
 class UserRepository:
@@ -31,11 +31,19 @@ class UserRepository:
             document = await self._collection.find_one({"_id": str(identifier)})
         return UserDocument.model_validate(document) if document is not None else None
 
+    async def find_all_ids(self) -> list[str]:
+        """Return user identifiers for safe maintenance/backfill operations."""
+
+        cursor = self._collection.find({}, projection={"_id": 1})
+        documents: list[Any] = await cursor.to_list(length=None)
+        return [str(document["_id"]) for document in documents]
+
     async def create(
         self,
         *,
         email: str,
         password_hash: str,
+        role: UserRole = "user",
         now: datetime | None = None,
     ) -> UserDocument:
         timestamp = now or utc_now()
@@ -43,6 +51,7 @@ class UserRepository:
             _id=ObjectId(),
             email=canonicalize_email(email),
             password_hash=password_hash,
+            role=role,
             created_at=timestamp,
             updated_at=timestamp,
         )

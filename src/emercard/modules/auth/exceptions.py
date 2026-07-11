@@ -28,3 +28,15 @@ class AuthenticationRequiredError(AuthError):
 class InvalidSessionError(AuthError):
     code = "auth.invalid_session"
     message = "The authentication session is invalid or has expired."
+
+
+class RegistrationProvisioningError(AuthError):
+    status_code = 503
+    code = "auth.registration_provisioning_failed"
+    message = "The account could not be provisioned. Please try again."
+
+
+class ForbiddenError(AuthError):
+    status_code = 403
+    code = "auth.forbidden"
+    message = "You do not have permission to perform this action."

@@ -84,9 +84,10 @@ Do not log or commit MongoDB URIs, secrets, tokens, cookies, request bodies, or 
 - `GET /health` returns `200` and `{ "status": "ok" }` without a database query.
 - `GET /ready` returns `200` only after a successful MongoDB ping, otherwise `503` with `error.code=database_unavailable`.
 - `GET /api/v1/meta` returns non-sensitive application and build metadata.
-- `POST /api/v1/auth/register` returns `201` with a direct `CurrentUserOutput`; registration does not authenticate the account.
+- `POST /api/v1/auth/register` returns `201` with a direct `CurrentUserOutput` containing role `user`; registration also idempotently provisions one empty incomplete medical profile and does not authenticate the account.
 - `POST /api/v1/auth/login` returns `200` with `CurrentUserOutput` and sets the short-lived `emercard_session` cookie.
 - `GET /api/v1/me` returns the authenticated `CurrentUserOutput`; `POST /api/v1/auth/logout` returns `204` and expires the cookie.
+- Future admin routes must depend on the shared admin authorization boundary; authenticated normal users receive `403 auth.forbidden`, while unauthenticated requests receive `401 auth.authentication_required`. No admin feature routes are implemented yet.
 - Browser calls from the exact configured frontend origin must use `fetch(..., { credentials: "include" })`; local development uses `http://localhost:4321`.
 - Phase 1 logout is stateless: a copied JWT remains valid until its 15-minute expiry. Do not claim immediate revocation.
 - Errors contain an error code, human-readable message, optional sanitized details, and `request_id`.
@@ -96,4 +97,24 @@ Do not log or commit MongoDB URIs, secrets, tokens, cookies, request bodies, or 
 
 The intended demo deployment is one Render web service connected to one MongoDB Atlas demo cluster. Configure the Render build command as `uv sync --locked --no-dev`, the start command as `uv run --no-dev uvicorn emercard.main:app --host 0.0.0.0 --port $PORT`, and the health check path as `/health`. Keep Atlas network access and the final frontend URL restricted to the project’s deployment requirements. Record provider-specific service names and URLs in deployment notes only after they are created; never commit credentials.
 
-Phase 1 now includes the `users` and `medical_profiles` persistence contract, typed repositories, cookie-based authentication endpoints, and isolated verification. Profile/public-link HTTP routes, Redis, messaging, encryption, cards, scans, audits, and admin features remain out of scope for this stage.
+This refactor includes the `users` and `medical_profiles` persistence contract, explicit `user`/`admin` roles, registration-time empty-profile provisioning, typed repositories, cookie-based authentication endpoints, and isolated verification. Profile-management HTTP routes, card persistence/provisioning, admin authorization/endpoints, public card lookup, token hashing/migration, Redis, messaging, encryption, scans, audits, and frontend integration remain deferred. Legacy profile-owned public-link persistence and indexes are retained for compatibility until the card-backed replacement is approved.
+
+Backfill profiles for existing users with the idempotent maintenance command:
+
+```bash
+uv run python -m emercard.db.backfill_profiles
+```
+
+Create the initial admin through the trusted seed script. Export
+`EMERCARD_ADMIN_EMAIL` and `EMERCARD_ADMIN_PASSWORD` only for this command; the
+script never changes an existing account password or elevates a normal user:
+
+```bash
+EMERCARD_ADMIN_EMAIL=admin@example.com \
+EMERCARD_ADMIN_PASSWORD='use-a-strong-password' \
+uv run python -m emercard.db.seed_admin
+```
+
+The command prints only a status and email. It returns `already_exists` when the
+admin account is already present and fails safely if the email belongs to a
+normal user.

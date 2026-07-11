@@ -14,7 +14,12 @@ from emercard.modules.profiles import (
     PublicProfileOutput,
     profile_state,
 )
-from emercard.modules.users import UserDocument, UserLoginInput, canonicalize_email
+from emercard.modules.users import (
+    UserDocument,
+    UserLoginInput,
+    UserRegistrationInput,
+    canonicalize_email,
+)
 
 
 def test_email_is_canonicalized_without_provider_specific_transformations() -> None:
@@ -25,7 +30,7 @@ def test_email_is_canonicalized_without_provider_specific_transformations() -> N
     )
 
 
-def test_user_document_serializes_object_id_and_hides_no_password_by_output_model() -> None:
+def test_user_document_defaults_legacy_role_and_serializes_object_id() -> None:
     document = UserDocument.model_validate(
         {
             "_id": "507f1f77bcf86cd799439011",
@@ -38,7 +43,15 @@ def test_user_document_serializes_object_id_and_hides_no_password_by_output_mode
 
     serialized = document.model_dump(mode="json", by_alias=True)
     assert serialized["_id"] == "507f1f77bcf86cd799439011"
+    assert serialized["role"] == "user"
     assert serialized["created_at"].endswith("Z")
+
+
+def test_registration_input_does_not_accept_a_client_selected_role() -> None:
+    with pytest.raises(ValidationError):
+        UserRegistrationInput.model_validate(
+            {"email": "person@example.com", "password": "password-123", "role": "admin"}
+        )
 
 
 def test_profile_input_does_not_accept_client_controlled_ids_or_public_state() -> None:
@@ -90,7 +103,7 @@ def _profile(**overrides: object) -> ProfileDocument:
     return ProfileDocument.model_validate(values)
 
 
-def test_profile_state_is_derived_for_incomplete_ready_and_public_states() -> None:
+def test_profile_state_ignores_legacy_public_link_state() -> None:
     assert profile_state(_profile(display_name=None)) == "incomplete"
     ready = _profile()
     assert profile_state(ready) == "ready_to_publish"
@@ -101,9 +114,9 @@ def test_profile_state_is_derived_for_incomplete_ready_and_public_states() -> No
             "published_at": "2026-01-01T00:00:00Z",
         }
     )
-    assert profile_state(published) == "published"
+    assert profile_state(published) == "ready_to_publish"
     disabled = _profile(public_access={"token": "old-token", "enabled": False})
-    assert profile_state(disabled) == "published_disabled"
+    assert profile_state(disabled) == "ready_to_publish"
 
 
 def test_public_output_is_an_explicit_allowlist() -> None:

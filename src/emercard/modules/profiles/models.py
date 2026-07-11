@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from emercard.core.config import get_settings
 from emercard.core.types import ObjectIdValue, UtcDateTime
 
-ProfileState = Literal["incomplete", "ready_to_publish", "published", "published_disabled"]
+ProfileState = Literal["incomplete", "ready_to_publish"]
 
 
 class Gender(StrEnum):
@@ -120,6 +120,8 @@ class EmergencyContactPublic(ProfileModel):
 
 
 class PublicAccessDocument(ProfileModel):
+    """Legacy public-link state retained until card-backed access is implemented."""
+
     token: str | None = Field(default=None, min_length=1, max_length=512)
     enabled: bool = False
     published_at: UtcDateTime | None = None
@@ -323,12 +325,8 @@ class PublicProfileOutput(ProfileModel):
 
 
 def profile_state(profile: ProfileDocument) -> ProfileState:
-    """Derive profile completeness/publication state without persisting a flag."""
+    """Derive profile completeness independently of legacy public-link state."""
 
-    if profile.public_access.enabled:
-        return "published"
-    if profile.public_access.token is not None:
-        return "published_disabled"
     required_values_present = all(
         (
             profile.display_name,

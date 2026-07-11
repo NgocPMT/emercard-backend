@@ -4,7 +4,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Response
 
+from emercard.modules.auth.exceptions import ForbiddenError
 from emercard.modules.auth.service import AuthService
+from emercard.modules.profiles.repository import ProfileRepository
 from emercard.modules.users import CurrentUserOutput, UserLoginInput, UserRegistrationInput
 from emercard.modules.users.repository import UserRepository
 
@@ -65,7 +67,13 @@ async def get_auth_service(request: Request) -> AuthService:
             request.app.state.database.database,
             request.app.state.settings,
         )
-    return AuthService(repository, request.app.state.settings)
+    profile_repository: Any = getattr(request.app.state, "profile_repository", None)
+    if profile_repository is None:
+        profile_repository = ProfileRepository(
+            request.app.state.database.database,
+            request.app.state.settings,
+        )
+    return AuthService(repository, profile_repository, request.app.state.settings)
 
 
 async def get_current_user(
@@ -76,6 +84,16 @@ async def get_current_user(
 
     token = request.cookies.get(request.app.state.settings.auth_cookie_name)
     return await service.current_user(token)
+
+
+async def require_admin(
+    user: CurrentUserOutput = Depends(get_current_user),  # noqa: B008
+) -> CurrentUserOutput:
+    """Require an authenticated principal with the persisted admin role."""
+
+    if user.role != "admin":
+        raise ForbiddenError
+    return user
 
 
 def build_current_user_router() -> APIRouter:

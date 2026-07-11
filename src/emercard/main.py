@@ -39,6 +39,7 @@ def create_app(
     settings: Settings | None = None,
     database: Database | None = None,
     auth_repository: Any | None = None,
+    profile_repository: Any | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     logging.getLogger("emercard.request").setLevel(app_settings.log_level)
@@ -52,6 +53,8 @@ def create_app(
     app.state.database = database or Database(app_settings)
     if auth_repository is not None:
         app.state.auth_repository = auth_repository
+    if profile_repository is not None:
+        app.state.profile_repository = profile_repository
 
     app.add_middleware(
         CORSMiddleware,

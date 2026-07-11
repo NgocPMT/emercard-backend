@@ -33,6 +33,47 @@ class ProfileRepository:
         document = await self._collection.find_one({"user_id": identifier})
         return _profile(document)
 
+    async def ensure_for_user(
+        self,
+        *,
+        user_id: ObjectId | str,
+        now: datetime | None = None,
+    ) -> ProfileDocument:
+        """Create the owner's empty profile without changing an existing profile."""
+
+        identifier = _object_id(user_id)
+        timestamp = now or utc_now()
+        update: dict[str, Any] = {
+            "$setOnInsert": {
+                "_id": ObjectId(),
+                "user_id": identifier,
+                "critical_allergies": [],
+                "important_conditions": [],
+                "critical_medications": [],
+                "emergency_contacts": [],
+                "public_access": {
+                    "token": None,
+                    "enabled": False,
+                    "published_at": None,
+                    "regenerated_at": None,
+                },
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            }
+        }
+        try:
+            document = await self._collection.find_one_and_update(
+                {"user_id": identifier},
+                update,
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+        except DuplicateKeyError:
+            document = await self._collection.find_one({"user_id": identifier})
+        if document is None:
+            raise RepositoryConflictError("profile ensure did not return a document")
+        return ProfileDocument.model_validate(document)
+
     async def upsert_for_user(
         self,
         *,

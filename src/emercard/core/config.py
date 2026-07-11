@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     auth_cookie_domain: str | None = None
     auth_clock_skew_seconds: Annotated[int, Field(ge=0, le=300)] = 30
 
+    # Seed-script-only credentials; never used by the HTTP authentication flow.
+    admin_email: str | None = None
+    admin_password: SecretStr | None = None
+
     display_name_max_length: Annotated[int, Field(ge=1, le=500)] = 120
     emergency_note_max_length: Annotated[int, Field(ge=1, le=2_000)] = 500
     medical_item_max_length: Annotated[int, Field(ge=1, le=500)] = 120

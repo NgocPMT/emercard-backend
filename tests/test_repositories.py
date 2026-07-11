@@ -79,6 +79,21 @@ async def test_user_repository_canonicalizes_lookup_and_maps_duplicate_email() -
 
 
 @pytest.mark.asyncio
+async def test_profile_ensure_creates_empty_profile_without_overwriting_existing_data() -> None:
+    database, collection = fake_database()
+    collection.find_one_and_update = AsyncMock(return_value=raw_profile())
+    repository = ProfileRepository(database, Settings(environment="test"))
+
+    result = await repository.ensure_for_user(user_id=USER_ID)
+
+    assert result.user_id == USER_ID
+    update = collection.find_one_and_update.await_args.args[1]
+    assert "$setOnInsert" in update
+    assert update["$setOnInsert"]["user_id"] == USER_ID
+    assert "display_name" not in update["$setOnInsert"]
+
+
+@pytest.mark.asyncio
 async def test_profile_upsert_is_keyed_by_authenticated_user_and_generates_contact_id() -> None:
     database, collection = fake_database()
     collection.find_one_and_update = AsyncMock(return_value=raw_profile())
