@@ -1,6 +1,14 @@
-# Demo deployment boundary
+# Deployment Boundary
 
-Plan 01 targets one Render web service connected to one MongoDB Atlas demo cluster. Provider resources must be created by the project team because account access, free-tier availability, cluster labels, and network policies are external to this repository.
+The current backend targets one Render web service connected to one MongoDB Atlas demo cluster. Provider resources must be created by the project team because account access, free-tier availability, cluster labels, and network policies are external to this repository.
+
+The intended Render build command is `uv sync --locked --no-dev`; the start command is `uv run --no-dev uvicorn emercard.main:app --host 0.0.0.0 --port $PORT`; and the health check path is `/health`. Keep Atlas network access and the final frontend URL restricted to the project's deployment requirements. Record provider-specific service names and URLs in the project handoff rather than committing credentials.
+
+## Current backend scope
+
+The backend includes the `users`, `medical_profiles`, and `cards` persistence contracts, explicit `user`/`admin` roles, registration-time empty-profile provisioning, typed repositories, cookie-based authentication endpoints, secure card serial/token primitives, independent card lifecycle transitions, and isolated verification.
+
+The following remain deferred: admin/user card endpoints, anonymous public card lookup, legacy token hashing/migration/removal, QR/NFC operations, inventory, scans, audits, Redis, messaging, encryption, deployment automation changes, and frontend integration. Legacy profile-owned public-link persistence and indexes remain unchanged for compatibility until the card-backed lookup replacement is approved.
 
 ## Atlas checklist
 
@@ -20,7 +28,7 @@ The included `render.yaml` defines the intended service. Configure these values 
 - `EMERCARD_MONGODB_URI`: Atlas TLS URI.
 - `EMERCARD_MONGODB_DATABASE`: final demo database name.
 - `EMERCARD_CORS_ORIGINS`: JSON list containing only the deployed frontend origin(s).
-- `EMERCARD_AUTH_SECRET`: generated or separately managed value of at least 32 characters; authentication is not implemented in Plan 01.
+- `EMERCARD_AUTH_SECRET`: generated or separately managed value of at least 32 characters.
 - `EMERCARD_ENVIRONMENT=demo`, `EMERCARD_DEBUG=false`, and `EMERCARD_MONGODB_TLS_REQUIRED=true`.
 
 Render supplies `PORT`; the start command binds to it. The service health check is `/health` and the post-deploy database smoke check is `/ready`.
