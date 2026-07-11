@@ -22,3 +22,6 @@ mongodb-data/
 .vscode/
 .idea/
 .DS_Store
+
+# Agent plans
+.plan
