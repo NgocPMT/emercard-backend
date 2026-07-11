@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -9,8 +10,24 @@ from pymongo.errors import OperationFailure
 
 from emercard.core.config import Settings
 from emercard.db import Database, initialize_indexes
-from emercard.db.indexes import PROFILES_PUBLIC_TOKEN_INDEX
+from emercard.db.indexes import (
+    CARDS_OWNER_CURRENT_INDEX,
+    CARDS_OWNER_INDEX,
+    CARDS_OWNER_STATUS_INDEX,
+    CARDS_REPLACEMENT_INDEX,
+    CARDS_REPLACES_INDEX,
+    CARDS_SERIAL_INDEX,
+    CARDS_STATUS_INDEX,
+    CARDS_TOKEN_HASH_INDEX,
+    PROFILES_PUBLIC_TOKEN_INDEX,
+)
 from emercard.db.repositories import RepositoryConflictError
+from emercard.modules.cards import (
+    CardReplacementError,
+    CardRepository,
+    CardSerialConflictError,
+    CardService,
+)
 from emercard.modules.profiles import ProfileRepository, ProfileUpsertInput
 from emercard.modules.users import UserRepository
 
@@ -142,6 +159,73 @@ async def test_real_mongo_public_token_state_transitions_and_index(mongo_context
 
     index_info = await database[settings.mongodb_profiles_collection].index_information()
     assert PROFILES_PUBLIC_TOKEN_INDEX in index_info
+
+
+@pytest.mark.mongo
+@pytest.mark.asyncio
+async def test_real_mongo_cards_support_multiple_active_cards_and_indexes(mongo_context) -> None:
+    database, settings = mongo_context
+    users = UserRepository(database, settings)
+    cards = CardRepository(database, settings)
+    service = CardService(cards, users)
+    user = await users.create(email="cards@example.com", password_hash="argon2-hash")
+
+    first = await service.provision_unassigned()
+    second = await service.provision_unassigned()
+    await service.assign_to_user(card_id=first.card.id, user_id=user.id)
+    await service.assign_to_user(card_id=second.card.id, user_id=user.id)
+    await service.activate(card_id=first.card.id, owner_id=user.id)
+    await service.activate(card_id=second.card.id, owner_id=user.id)
+
+    active = await cards.list_active_for_user(user.id)
+    assert {card.id for card in active} == {first.card.id, second.card.id}
+    stored = await database[settings.mongodb_cards_collection].find_one({"_id": first.card.id})
+    assert stored is not None
+    assert first.public_token not in stored.values()
+
+    with pytest.raises(CardSerialConflictError):
+        await cards.create_unassigned_card(
+            serial=first.card.serial,
+            token_hash=first.card.token_hash,
+        )
+
+    index_info = await database[settings.mongodb_cards_collection].index_information()
+    assert {
+        CARDS_SERIAL_INDEX,
+        CARDS_TOKEN_HASH_INDEX,
+        CARDS_OWNER_INDEX,
+        CARDS_STATUS_INDEX,
+        CARDS_OWNER_CURRENT_INDEX,
+        CARDS_OWNER_STATUS_INDEX,
+        CARDS_REPLACES_INDEX,
+        CARDS_REPLACEMENT_INDEX,
+    }.issubset(index_info)
+
+
+@pytest.mark.mongo
+@pytest.mark.asyncio
+async def test_real_mongo_replacement_rolls_back_when_linking_fails(mongo_context) -> None:
+    database, settings = mongo_context
+    hello = await database.client.admin.command("hello")
+    if not hello.get("setName"):
+        pytest.skip("MongoDB transactions require a replica set")
+
+    users = UserRepository(database, settings)
+    cards = CardRepository(database, settings)
+    service = CardService(cards, users)
+    user = await users.create(email="replacement@example.com", password_hash="argon2-hash")
+    original = await service.provision_unassigned()
+    await service.assign_to_user(card_id=original.card.id, user_id=user.id)
+
+    cards.link_replacement = AsyncMock(side_effect=RuntimeError("forced test failure"))  # type: ignore[method-assign]
+    with pytest.raises(CardReplacementError):
+        await service.replace(card_id=original.card.id)
+
+    stored = await cards.find_by_id(original.card.id)
+    assert stored is not None
+    assert stored.status.value == "assigned"
+    assert stored.replacement_card_id is None
+    assert await database[settings.mongodb_cards_collection].count_documents({}) == 1
 
 
 @pytest.mark.mongo

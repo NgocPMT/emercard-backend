@@ -4,12 +4,13 @@ This document records the implementation defaults for Plan 02. It is a persisten
 
 ## Collections
 
-Only these Phase 1 feature collections are used:
+These Phase 1 feature collections are used:
 
 - `users`
 - `medical_profiles`
+- `cards`
 
-`medical_profiles.user_id` is unique, enforcing one profile per account. Public-link state is embedded in the profile; there is no separate link collection.
+`medical_profiles.user_id` is unique, enforcing one profile per account. Public-link state remains embedded in the profile for legacy compatibility; there is no separate legacy link collection. The card persistence and token-ownership contract is documented in [`card-persistence.md`](card-persistence.md).
 
 ## User contract
 
@@ -71,11 +72,13 @@ A complete profile requires display name, accepted birth year, approved gender, 
 
 ## Indexes and initialization
 
-Required indexes are:
+Required user/profile indexes are:
 
 - unique `users.email`;
 - unique `medical_profiles.user_id`;
 - unique sparse/partial `medical_profiles.public_access.token`, allowing profiles without a token.
+
+The `cards` indexes, lifecycle invariants, token-hash contract, and replacement transaction requirements are documented in [`card-persistence.md`](card-persistence.md).
 
 Initialization is idempotent and never drops or rebuilds data. The application may run it on startup only when configured; an explicit command is the deployment-safe default.
 

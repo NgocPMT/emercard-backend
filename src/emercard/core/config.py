@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     mongodb_tls_required: bool = False
     mongodb_users_collection: str = "users"
     mongodb_profiles_collection: str = "medical_profiles"
+    mongodb_cards_collection: str = "cards"
     mongodb_test_database_prefix: str = "emercard_test"
     mongodb_index_initialization_mode: IndexInitializationMode = "disabled"
 
@@ -91,6 +92,7 @@ class Settings(BaseSettings):
     @field_validator(
         "mongodb_users_collection",
         "mongodb_profiles_collection",
+        "mongodb_cards_collection",
         "mongodb_test_database_prefix",
         "auth_cookie_name",
     )

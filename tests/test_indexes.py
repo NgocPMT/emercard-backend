@@ -4,6 +4,14 @@ import pytest
 
 from emercard.core.config import Settings
 from emercard.db.indexes import (
+    CARDS_OWNER_CURRENT_INDEX,
+    CARDS_OWNER_INDEX,
+    CARDS_OWNER_STATUS_INDEX,
+    CARDS_REPLACEMENT_INDEX,
+    CARDS_REPLACES_INDEX,
+    CARDS_SERIAL_INDEX,
+    CARDS_STATUS_INDEX,
+    CARDS_TOKEN_HASH_INDEX,
     PROFILES_PUBLIC_TOKEN_INDEX,
     PROFILES_USER_INDEX,
     USERS_EMAIL_INDEX,
@@ -21,6 +29,18 @@ class FakeDatabase:
         self.collections = {
             "users": FakeCollection([USERS_EMAIL_INDEX]),
             "medical_profiles": FakeCollection([PROFILES_USER_INDEX, PROFILES_PUBLIC_TOKEN_INDEX]),
+            "cards": FakeCollection(
+                [
+                    CARDS_SERIAL_INDEX,
+                    CARDS_TOKEN_HASH_INDEX,
+                    CARDS_OWNER_INDEX,
+                    CARDS_STATUS_INDEX,
+                    CARDS_OWNER_CURRENT_INDEX,
+                    CARDS_OWNER_STATUS_INDEX,
+                    CARDS_REPLACES_INDEX,
+                    CARDS_REPLACEMENT_INDEX,
+                ]
+            ),
         }
 
     def __getitem__(self, name: str) -> FakeCollection:
@@ -37,6 +57,16 @@ async def test_initialize_indexes_is_explicit_and_uses_required_collections() ->
     assert result == {
         "users": [USERS_EMAIL_INDEX],
         "medical_profiles": [PROFILES_USER_INDEX, PROFILES_PUBLIC_TOKEN_INDEX],
+        "cards": [
+            CARDS_SERIAL_INDEX,
+            CARDS_TOKEN_HASH_INDEX,
+            CARDS_OWNER_INDEX,
+            CARDS_STATUS_INDEX,
+            CARDS_OWNER_CURRENT_INDEX,
+            CARDS_OWNER_STATUS_INDEX,
+            CARDS_REPLACES_INDEX,
+            CARDS_REPLACEMENT_INDEX,
+        ],
     }
     database.collections["users"].create_indexes.assert_awaited_once()
     database.collections["medical_profiles"].create_indexes.assert_awaited_once()
@@ -45,3 +75,8 @@ async def test_initialize_indexes_is_explicit_and_uses_required_collections() ->
     assert profile_indexes[1].document["partialFilterExpression"] == {
         "public_access.token": {"$type": "string"}
     }
+    card_indexes = database.collections["cards"].create_indexes.await_args.args[0]
+    assert not any(
+        index.document.get("unique") and "owner_id" in str(index.document["key"])
+        for index in card_indexes
+    )

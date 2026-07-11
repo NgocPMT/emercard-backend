@@ -59,6 +59,7 @@ def test_persistence_and_auth_ready_settings_are_validated() -> None:
 
     assert settings.mongodb_users_collection == "users"
     assert settings.mongodb_profiles_collection == "medical_profiles"
+    assert settings.mongodb_cards_collection == "cards"
     assert settings.public_link_token_bytes == 32
     assert settings.auth_cookie_http_only is True
     assert settings.public_link_route_prefix == "/public"
