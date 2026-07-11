@@ -18,13 +18,15 @@ from emercard.api.errors import (
 from emercard.api.middleware import request_context_middleware
 from emercard.api.routes import build_api_router, build_infrastructure_router
 from emercard.core.config import Settings, get_settings
-from emercard.db import Database
+from emercard.db import Database, initialize_indexes
 
 
 @asynccontextmanager
 async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     database: Database = app.state.database
     await database.start()
+    if app.state.settings.mongodb_index_initialization_mode == "startup":
+        await initialize_indexes(database.database, app.state.settings)
     try:
         yield
     finally:

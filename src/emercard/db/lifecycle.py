@@ -23,6 +23,7 @@ class Database:
             "serverSelectionTimeoutMS": self._settings.mongodb_server_selection_timeout_ms,
             "minPoolSize": self._settings.mongodb_min_pool_size,
             "maxPoolSize": self._settings.mongodb_max_pool_size,
+            "tz_aware": True,
         }
         if self._settings.mongodb_tls_required:
             options["tls"] = True

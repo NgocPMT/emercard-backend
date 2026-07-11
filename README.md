@@ -47,6 +47,20 @@ uv run pyright
 uv run pytest
 ```
 
+Initialize the Phase 1 collections and indexes explicitly against the configured database:
+
+```bash
+uv run python -m emercard.db.initialize
+```
+
+The initialization command is idempotent and never drops or rebuilds data. Run it twice during local verification. Set `EMERCARD_MONGODB_INDEX_INITIALIZATION_MODE=startup` only when the deployment should ensure indexes during application startup; incompatible existing index options fail visibly.
+
+For the isolated real-MongoDB repository suite, provide a disposable test URI. It never defaults to the local development or Atlas demo database:
+
+```bash
+EMERCARD_TEST_MONGODB_URI=mongodb://localhost:27017 uv run pytest -m mongo
+```
+
 Smoke checks:
 
 ```bash
@@ -77,4 +91,4 @@ Do not log or commit MongoDB URIs, secrets, tokens, cookies, request bodies, or 
 
 The intended demo deployment is one Render web service connected to one MongoDB Atlas demo cluster. Configure the Render build command as `uv sync --locked --no-dev`, the start command as `uv run --no-dev uvicorn emercard.main:app --host 0.0.0.0 --port $PORT`, and the health check path as `/health`. Keep Atlas network access and the final frontend URL restricted to the project’s deployment requirements. Record provider-specific service names and URLs in deployment notes only after they are created; never commit credentials.
 
-Phase 1 intentionally excludes domain collections, indexes, authentication, profile CRUD, public links, Redis, messaging, encryption, cards, scans, audits, and admin features. Those belong to later plans.
+Phase 1 Plan 02 now includes the `users` and `medical_profiles` persistence contract, indexes, typed repositories, and isolated repository verification. It still excludes authentication endpoints, profile/public-link HTTP routes, Redis, messaging, encryption, cards, scans, audits, and admin features; those belong to later plans.

@@ -2,12 +2,16 @@
 
 from functools import lru_cache
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 EnvironmentName = Literal["local", "test", "demo", "staging", "production"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+IndexInitializationMode = Literal["disabled", "startup", "command"]
+AuthAlgorithm = Literal["HS256", "HS384", "HS512"]
+CookieSameSite = Literal["lax", "strict", "none"]
 
 
 class Settings(BaseSettings):
@@ -36,21 +40,75 @@ class Settings(BaseSettings):
     mongodb_min_pool_size: Annotated[int, Field(ge=0, le=1_000)] = 0
     mongodb_max_pool_size: Annotated[int, Field(ge=1, le=10_000)] = 20
     mongodb_tls_required: bool = False
+    mongodb_users_collection: str = "users"
+    mongodb_profiles_collection: str = "medical_profiles"
+    mongodb_test_database_prefix: str = "emercard_test"
+    mongodb_index_initialization_mode: IndexInitializationMode = "disabled"
 
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:4321"])
     cors_allow_credentials: bool = False
     frontend_base_url: str | None = None
 
+    public_link_token_bytes: Annotated[int, Field(ge=16, le=128)] = 32
+    public_link_route_prefix: str = "/p"
+    public_link_explicit_publication: bool = True
+
     # Reserved for the authentication stage; no authentication is implemented here.
     auth_secret: SecretStr | None = None
+    auth_algorithm: AuthAlgorithm = "HS256"
+    auth_access_token_lifetime_seconds: Annotated[int, Field(ge=60, le=86_400)] = 900
+    auth_cookie_name: str = "emercard_session"
+    auth_cookie_secure: bool = False
+    auth_cookie_http_only: bool = True
+    auth_cookie_same_site: CookieSameSite = "lax"
+    auth_cookie_path: str = "/"
+    auth_cookie_domain: str | None = None
+    auth_clock_skew_seconds: Annotated[int, Field(ge=0, le=300)] = 30
 
-    @field_validator("api_prefix")
+    display_name_max_length: Annotated[int, Field(ge=1, le=500)] = 120
+    emergency_note_max_length: Annotated[int, Field(ge=1, le=2_000)] = 500
+    medical_item_max_length: Annotated[int, Field(ge=1, le=500)] = 120
+    medical_list_max_items: Annotated[int, Field(ge=1, le=100)] = 10
+    emergency_contacts_max_count: Annotated[int, Field(ge=1, le=20)] = 5
+    contact_name_max_length: Annotated[int, Field(ge=1, le=500)] = 100
+    contact_relationship_max_length: Annotated[int, Field(ge=1, le=500)] = 80
+    contact_phone_max_length: Annotated[int, Field(ge=1, le=100)] = 32
+    birth_year_min: Annotated[int, Field(ge=1800, le=2100)] = 1900
+    birth_year_max: Annotated[int, Field(ge=1800, le=2100)] = 2026
+
+    @field_validator("api_prefix", "public_link_route_prefix", "auth_cookie_path")
     @classmethod
-    def validate_api_prefix(cls, value: str) -> str:
+    def validate_path_prefix(cls, value: str) -> str:
         normalized = value.strip()
         if not normalized or not normalized.startswith("/"):
-            raise ValueError("api_prefix must start with '/'")
+            raise ValueError("path settings must start with '/'")
         return normalized.rstrip("/") or "/"
+
+    @field_validator(
+        "mongodb_users_collection",
+        "mongodb_profiles_collection",
+        "mongodb_test_database_prefix",
+        "auth_cookie_name",
+    )
+    @classmethod
+    def validate_identifier_settings(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or any(character in normalized for character in " $."):
+            raise ValueError(
+                "identifier settings must be non-empty and contain no spaces, '$', or '.'"
+            )
+        return normalized
+
+    @field_validator("frontend_base_url")
+    @classmethod
+    def validate_frontend_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().rstrip("/")
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("frontend_base_url must be an absolute http(s) URL")
+        return normalized
 
     @field_validator("log_level", mode="before")
     @classmethod
@@ -89,6 +147,8 @@ class Settings(BaseSettings):
     def validate_deployment_values(self) -> Settings:
         if self.mongodb_min_pool_size > self.mongodb_max_pool_size:
             raise ValueError("mongodb_min_pool_size cannot exceed mongodb_max_pool_size")
+        if self.birth_year_min > self.birth_year_max:
+            raise ValueError("birth_year_min cannot exceed birth_year_max")
         if self.cors_allow_credentials and "*" in self.cors_origins:
             raise ValueError("wildcard CORS origins cannot be used with credentials")
         if self.environment in {"demo", "staging", "production"}:
@@ -98,6 +158,13 @@ class Settings(BaseSettings):
                 raise ValueError("auth_secret must contain at least 32 characters for deployments")
         if self.environment == "production" and not self.mongodb_tls_required:
             raise ValueError("mongodb_tls_required must be true in production")
+        if self.environment in {"demo", "staging", "production"}:
+            if not self.auth_cookie_secure:
+                raise ValueError("auth_cookie_secure must be true for deployments")
+            if self.frontend_base_url is None:
+                raise ValueError("frontend_base_url is required for deployments")
+        if self.auth_cookie_same_site == "none" and not self.auth_cookie_secure:
+            raise ValueError("auth_cookie_secure must be true when auth_cookie_same_site is 'none'")
         return self
 
 

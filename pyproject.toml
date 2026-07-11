@@ -32,6 +32,9 @@ addopts = "-ra"
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+markers = [
+    "mongo: requires an explicitly configured disposable MongoDB test database",
+]
 
 [tool.ruff]
 target-version = "py314"
