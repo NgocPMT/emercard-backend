@@ -78,6 +78,26 @@ class CardListOutput(CardSchema):
     next_cursor: str | None = None
 
 
+class UserCardOutput(CardSchema):
+    """Allowlisted card representation for the authenticated owner."""
+
+    id: str
+    serial: str
+    status: CardStatus
+    is_current: bool
+    issued_at: UtcDateTime
+    activated_at: UtcDateTime | None
+    disabled_at: UtcDateTime | None
+    created_at: UtcDateTime
+    updated_at: UtcDateTime
+    can_activate: bool
+    can_disable: bool
+
+
+class UserCardListOutput(CardSchema):
+    cards: list[UserCardOutput]
+
+
 class CustodyEventOutput(CardSchema):
     id: str
     card_id: str
@@ -95,6 +115,27 @@ def encoding_state(card: CardDocument) -> EncodingState:
     if card.encoding_verified_at is None:
         return "link_generated"
     return "verified"
+
+
+def to_user_card(card: CardDocument) -> UserCardOutput:
+    """Map an issued operational card without exposing internal card metadata."""
+
+    issued_at = card.issued_at
+    if issued_at is None:
+        raise ValueError("user card output requires an issued card")
+    return UserCardOutput(
+        id=str(card.id),
+        serial=card.serial,
+        status=card.status,
+        is_current=card.is_current,
+        issued_at=issued_at,
+        activated_at=card.activated_at,
+        disabled_at=card.disabled_at,
+        created_at=card.created_at,
+        updated_at=card.updated_at,
+        can_activate=card.status in {CardStatus.ASSIGNED, CardStatus.DISABLED},
+        can_disable=card.status is CardStatus.ACTIVE,
+    )
 
 
 def to_admin_card(

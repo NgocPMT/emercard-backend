@@ -18,7 +18,10 @@ from emercard.modules.cards.errors import (
     CardInvalidTransitionError,
     CardLinkAlreadyProvisionedError,
     CardNotFoundError,
+    CardNotIssuedError,
+    CardProfileNotReadyError,
     CardReassignmentNotAllowedError,
+    CardServiceUnavailableError,
     CardTerminalStateError,
     CardUserNotFoundError,
 )
@@ -82,6 +85,17 @@ def card_exception_handler(request: Request, exc: CardError) -> JSONResponse:
             409,
             "card.encoding_not_verified",
             "Thẻ chưa được xác minh mã hóa.",
+        ),
+        CardNotIssuedError: (409, "card.not_issued", "Thẻ chưa được bàn giao."),
+        CardProfileNotReadyError: (
+            409,
+            "card.profile_not_ready",
+            "Hồ sơ y tế chưa đủ thông tin để kích hoạt thẻ.",
+        ),
+        CardServiceUnavailableError: (
+            503,
+            "card.service_unavailable",
+            "Dịch vụ thẻ tạm thời không khả dụng.",
         ),
         CardReassignmentNotAllowedError: (
             409,

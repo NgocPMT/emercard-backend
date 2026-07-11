@@ -8,9 +8,14 @@ from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 from bson.objectid import ObjectId
+from pymongo.errors import PyMongoError
 
 from emercard.core.types import utc_now
-from emercard.db.repositories import RepositoryConflictError, RepositoryError
+from emercard.db.repositories import (
+    InvalidIdentifierError,
+    RepositoryConflictError,
+    RepositoryError,
+)
 from emercard.modules.cards.errors import (
     CardAlreadyAssignedError,
     CardAlreadyIssuedError,
@@ -21,11 +26,14 @@ from emercard.modules.cards.errors import (
     CardInvalidTransitionError,
     CardLinkAlreadyProvisionedError,
     CardNotFoundError,
+    CardNotIssuedError,
     CardOwnershipMismatchError,
+    CardProfileNotReadyError,
     CardProvisioningError,
     CardReassignmentNotAllowedError,
     CardReplacementError,
     CardSerialConflictError,
+    CardServiceUnavailableError,
     CardTerminalStateError,
     CardTokenHashConflictError,
     CardUserNotFoundError,
@@ -41,6 +49,7 @@ from emercard.modules.cards.models import (
     CardProvisioningResult,
     CardStatus,
 )
+from emercard.modules.profiles.models import profile_state
 
 _MAX_IDENTITY_RETRIES = 3
 
@@ -67,6 +76,36 @@ class CardRepositoryProtocol(Protocol):
         now: datetime | None = None,
         session: Any | None = None,
     ) -> CardDocument: ...
+
+    async def list_user_controllable(
+        self, user_id: ObjectId | str, *, session: Any | None = None
+    ) -> list[CardDocument]: ...
+
+    async def find_user_controllable(
+        self,
+        *,
+        card_id: ObjectId | str,
+        user_id: ObjectId | str,
+        session: Any | None = None,
+    ) -> CardDocument | None: ...
+
+    async def activate_for_user(
+        self,
+        *,
+        card_id: ObjectId | str,
+        user_id: ObjectId | str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument | None: ...
+
+    async def disable_for_user(
+        self,
+        *,
+        card_id: ObjectId | str,
+        user_id: ObjectId | str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument | None: ...
 
     async def provision_link(
         self,
@@ -186,6 +225,10 @@ class UserRepositoryProtocol(Protocol):
     async def find_by_email(self, email: str) -> Any | None: ...
 
 
+class ProfileRepositoryProtocol(Protocol):
+    async def find_by_user_id(self, user_id: ObjectId | str) -> Any | None: ...
+
+
 class CustodyEventRepositoryProtocol(Protocol):
     async def append(
         self,
@@ -227,11 +270,13 @@ class CardService:
         serial_generator: Callable[[], str] = generate_serial,
         token_generator: Callable[[], str] = generate_public_token,
         public_card_base_url: str | None = None,
+        profile_repository: ProfileRepositoryProtocol | None = None,
         idempotency_repository: IdempotencyRepositoryProtocol | None = None,
         custody_event_repository: CustodyEventRepositoryProtocol | None = None,
     ) -> None:
         self._repository = repository
         self._user_repository = user_repository
+        self._profile_repository = profile_repository
         self._serial_generator = serial_generator
         self._token_generator = token_generator
         self._public_card_base_url = (
@@ -659,6 +704,138 @@ class CardService:
         if assigned is None:
             raise CardAlreadyAssignedError("card assignment was lost to a concurrent update")
         return assigned
+
+    async def list_user_cards(self, *, user_id: ObjectId | str) -> list[CardDocument]:
+        """Return only issued current cards visible to the authenticated owner."""
+
+        try:
+            return await self._repository.list_user_controllable(user_id)
+        except InvalidIdentifierError as error:
+            raise CardNotFoundError("card does not exist") from error
+        except (RepositoryError, PyMongoError) as error:
+            raise CardServiceUnavailableError("card service is unavailable") from error
+
+    async def get_user_card(
+        self, *, card_id: ObjectId | str, user_id: ObjectId | str
+    ) -> CardDocument:
+        """Load a single visible card without disclosing cross-owner resources."""
+
+        try:
+            card = await self._repository.find_user_controllable(card_id=card_id, user_id=user_id)
+        except InvalidIdentifierError as error:
+            raise CardNotFoundError("card does not exist") from error
+        except (RepositoryError, PyMongoError) as error:
+            raise CardServiceUnavailableError("card service is unavailable") from error
+        if card is None:
+            raise CardNotFoundError("card does not exist")
+        return card
+
+    async def activate_user_card(
+        self,
+        *,
+        card_id: ObjectId | str,
+        user_id: ObjectId | str,
+        now: datetime | None = None,
+    ) -> CardDocument:
+        """Activate an owned issued card after checking current profile readiness."""
+
+        card = await self._load_user_action_card(card_id=card_id, user_id=user_id)
+        if card.status is CardStatus.ACTIVE:
+            return card
+        if card.status not in {CardStatus.ASSIGNED, CardStatus.DISABLED}:
+            raise CardInvalidTransitionError("card lifecycle transition is not allowed")
+        if card.encoding_verified_at is None:
+            raise CardEncodingNotVerifiedError("card encoding has not been verified")
+        await self._require_ready_profile(user_id)
+        try:
+            activated = await self._repository.activate_for_user(
+                card_id=card.id, user_id=user_id, now=now
+            )
+        except (InvalidIdentifierError, RepositoryError, PyMongoError) as error:
+            if isinstance(error, InvalidIdentifierError):
+                raise CardNotFoundError("card does not exist") from error
+            raise CardServiceUnavailableError("card service is unavailable") from error
+        if activated is not None:
+            return activated
+        return await self._resolve_user_transition_race(
+            card_id=card.id, user_id=user_id, expected_status=CardStatus.ACTIVE
+        )
+
+    async def disable_user_card(
+        self,
+        *,
+        card_id: ObjectId | str,
+        user_id: ObjectId | str,
+        now: datetime | None = None,
+    ) -> CardDocument:
+        """Disable an owned issued active card without changing sibling cards."""
+
+        card = await self._load_user_action_card(card_id=card_id, user_id=user_id)
+        if card.status is CardStatus.DISABLED:
+            return card
+        if card.status is not CardStatus.ACTIVE:
+            raise CardInvalidTransitionError("card lifecycle transition is not allowed")
+        try:
+            disabled = await self._repository.disable_for_user(
+                card_id=card.id, user_id=user_id, now=now
+            )
+        except (InvalidIdentifierError, RepositoryError, PyMongoError) as error:
+            if isinstance(error, InvalidIdentifierError):
+                raise CardNotFoundError("card does not exist") from error
+            raise CardServiceUnavailableError("card service is unavailable") from error
+        if disabled is not None:
+            return disabled
+        return await self._resolve_user_transition_race(
+            card_id=card.id, user_id=user_id, expected_status=CardStatus.DISABLED
+        )
+
+    async def _load_user_action_card(
+        self, *, card_id: ObjectId | str, user_id: ObjectId | str
+    ) -> CardDocument:
+        try:
+            card = await self._repository.find_by_id(card_id)
+        except InvalidIdentifierError as error:
+            raise CardNotFoundError("card does not exist") from error
+        except (RepositoryError, PyMongoError) as error:
+            raise CardServiceUnavailableError("card service is unavailable") from error
+        if card is None or card.owner_id != _as_object_id(user_id):
+            raise CardNotFoundError("card does not exist")
+        if card.status in {CardStatus.LOST, CardStatus.REPLACED, CardStatus.VOID}:
+            raise CardTerminalStateError("terminal cards cannot change state")
+        if not card.is_current:
+            raise CardNotFoundError("card does not exist")
+        if card.issued_at is None:
+            raise CardNotIssuedError("card has not been issued")
+        return card
+
+    async def _require_ready_profile(self, user_id: ObjectId | str) -> None:
+        repository = self._profile_repository
+        if repository is None:
+            raise CardServiceUnavailableError("card service is unavailable")
+        try:
+            profile = await repository.find_by_user_id(user_id)
+            if profile is None:
+                raise CardServiceUnavailableError("card service is unavailable")
+            if profile_state(profile) != "ready_to_publish":
+                raise CardProfileNotReadyError("profile is not ready for card activation")
+        except CardProfileNotReadyError, CardServiceUnavailableError:
+            raise
+        except (RepositoryError, PyMongoError, ValueError) as error:
+            raise CardServiceUnavailableError("card service is unavailable") from error
+
+    async def _resolve_user_transition_race(
+        self,
+        *,
+        card_id: ObjectId,
+        user_id: ObjectId | str,
+        expected_status: CardStatus,
+    ) -> CardDocument:
+        latest = await self._load_user_action_card(card_id=card_id, user_id=user_id)
+        if latest.status is expected_status:
+            return latest
+        if latest.status in {CardStatus.LOST, CardStatus.REPLACED, CardStatus.VOID}:
+            raise CardTerminalStateError("terminal cards cannot change state")
+        raise CardInvalidTransitionError("card lifecycle transition was not applied")
 
     async def transition(
         self,

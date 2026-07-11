@@ -22,12 +22,17 @@ from emercard.db.indexes import (
 )
 from emercard.db.repositories import RepositoryConflictError
 from emercard.modules.cards import (
+    CardDocument,
+    CardNotFoundError,
     CardReplacementError,
     CardRepository,
     CardSerialConflictError,
     CardService,
+    CardStatus,
+    CardTerminalStateError,
     CustodyEventRepository,
     generate_serial,
+    hash_public_token,
 )
 from emercard.modules.profiles import ProfileRepository, ProfileUpsertInput
 from emercard.modules.users import UserRepository
@@ -59,6 +64,168 @@ async def mongo_context():
     finally:
         await database_handle.client.drop_database(settings.mongodb_database)
         await database.close()
+
+
+@pytest.mark.mongo
+@pytest.mark.asyncio
+async def _create_verified_assigned_card(
+    cards: CardRepository,
+    users: UserRepository,
+    *,
+    owner_id,
+    admin_id,
+) -> CardDocument:
+    provisioning = await CardService(cards, users).provision_unassigned()
+    confirmed = await cards.confirm_encoding(
+        card_id=provisioning.card.id,
+        token_hash=hash_public_token(provisioning.public_token),
+        admin_id=admin_id,
+    )
+    assert confirmed is not None
+    assigned = await CardService(cards, users).assign_verified_to_user(
+        card_id=provisioning.card.id,
+        user_id=owner_id,
+        admin_id=admin_id,
+    )
+    return assigned
+
+
+async def _create_issued_card(
+    cards: CardRepository,
+    users: UserRepository,
+    *,
+    owner_id,
+    admin_id,
+) -> CardDocument:
+    assigned = await _create_verified_assigned_card(
+        cards, users, owner_id=owner_id, admin_id=admin_id
+    )
+    return await CardService(cards, users).issue(card_id=assigned.id, admin_id=admin_id)
+
+
+@pytest.mark.mongo
+@pytest.mark.asyncio
+async def test_real_mongo_user_card_visibility_filters_and_orders_cards(mongo_context) -> None:
+    database, settings = mongo_context
+    users = UserRepository(database, settings)
+    cards = CardRepository(database, settings)
+    profiles = ProfileRepository(database, settings)
+    owner = await users.create(email="user-controls-owner@example.com", password_hash="argon2-hash")
+    other = await users.create(email="user-controls-other@example.com", password_hash="argon2-hash")
+    admin = await users.create(
+        email="user-controls-admin@example.com", password_hash="argon2-hash", role="admin"
+    )
+    await profiles.upsert_for_user(
+        user_id=owner.id,
+        profile=ProfileUpsertInput(
+            display_name="Owner",
+            birth_year=1995,
+            gender="male",
+            blood_type="O+",
+            emergency_contacts=[
+                {"name": "Contact", "relationship": "Family", "phone": "0900000000"}
+            ],
+        ),
+    )
+    user_service = CardService(cards, users, profile_repository=profiles)
+    active = await _create_issued_card(cards, users, owner_id=owner.id, admin_id=admin.id)
+    disabled = await _create_issued_card(cards, users, owner_id=owner.id, admin_id=admin.id)
+    assigned = await _create_issued_card(cards, users, owner_id=owner.id, admin_id=admin.id)
+    unissued = await _create_verified_assigned_card(
+        cards, users, owner_id=owner.id, admin_id=admin.id
+    )
+    lost = await _create_issued_card(cards, users, owner_id=owner.id, admin_id=admin.id)
+    foreign = await _create_issued_card(cards, users, owner_id=other.id, admin_id=admin.id)
+
+    await user_service.activate_user_card(card_id=active.id, user_id=owner.id)
+    await user_service.activate_user_card(card_id=disabled.id, user_id=owner.id)
+    await user_service.disable_user_card(card_id=disabled.id, user_id=owner.id)
+    await user_service.mark_lost(card_id=lost.id)
+
+    visible = await user_service.list_user_cards(user_id=owner.id)
+    assert [card.status for card in visible] == [
+        CardStatus.ACTIVE,
+        CardStatus.DISABLED,
+        CardStatus.ASSIGNED,
+    ]
+    assert {card.id for card in visible} == {active.id, disabled.id, assigned.id}
+    for hidden in [unissued, lost, foreign]:
+        with pytest.raises(CardNotFoundError):
+            await user_service.get_user_card(card_id=hidden.id, user_id=owner.id)
+
+
+@pytest.mark.mongo
+@pytest.mark.asyncio
+async def test_real_mongo_user_card_controls_are_atomic_and_idempotent(mongo_context) -> None:
+    database, settings = mongo_context
+    hello = await database.client.admin.command("hello")
+    if not hello.get("setName"):
+        pytest.skip("MongoDB user-control race tests require a replica set")
+
+    users = UserRepository(database, settings)
+    cards = CardRepository(database, settings)
+    profiles = ProfileRepository(database, settings)
+    owner = await users.create(email="race-owner@example.com", password_hash="argon2-hash")
+    admin = await users.create(
+        email="race-admin@example.com", password_hash="argon2-hash", role="admin"
+    )
+    await profiles.upsert_for_user(
+        user_id=owner.id,
+        profile=ProfileUpsertInput(
+            display_name="Owner",
+            birth_year=1995,
+            gender="male",
+            blood_type="O+",
+            emergency_contacts=[
+                {"name": "Contact", "relationship": "Family", "phone": "0900000000"}
+            ],
+        ),
+    )
+    user_service = CardService(cards, users, profile_repository=profiles)
+    admin_service = CardService(cards, users)
+    card = await _create_issued_card(cards, users, owner_id=owner.id, admin_id=admin.id)
+
+    results = await asyncio.gather(
+        *[user_service.activate_user_card(card_id=card.id, user_id=owner.id) for _ in range(2)]
+    )
+    assert [result.status for result in results] == [CardStatus.ACTIVE, CardStatus.ACTIVE]
+    stored = await cards.find_by_id(card.id)
+    assert stored is not None
+    assert stored.status is CardStatus.ACTIVE
+
+    conflicting = await asyncio.gather(
+        user_service.activate_user_card(card_id=card.id, user_id=owner.id),
+        user_service.disable_user_card(card_id=card.id, user_id=owner.id),
+        return_exceptions=True,
+    )
+    assert any(isinstance(result, CardDocument) for result in conflicting)
+    concurrent_state = await cards.find_by_id(card.id)
+    assert concurrent_state is not None
+    assert concurrent_state.status in {CardStatus.ACTIVE, CardStatus.DISABLED}
+
+    first_disabled = await user_service.disable_user_card(card_id=card.id, user_id=owner.id)
+    repeated = await user_service.disable_user_card(card_id=card.id, user_id=owner.id)
+    assert first_disabled.disabled_at is not None
+    assert repeated.disabled_at == first_disabled.disabled_at
+
+    terminal = await _create_issued_card(cards, users, owner_id=owner.id, admin_id=admin.id)
+    await admin_service.mark_lost(card_id=terminal.id)
+    with pytest.raises(CardTerminalStateError):
+        await user_service.activate_user_card(card_id=terminal.id, user_id=owner.id)
+    terminal_stored = await cards.find_by_id(terminal.id)
+    assert terminal_stored is not None
+    assert terminal_stored.status is CardStatus.LOST
+
+    raced_terminal = await _create_issued_card(cards, users, owner_id=owner.id, admin_id=admin.id)
+    race_results = await asyncio.gather(
+        user_service.activate_user_card(card_id=raced_terminal.id, user_id=owner.id),
+        admin_service.mark_lost(card_id=raced_terminal.id),
+        return_exceptions=True,
+    )
+    assert any(isinstance(result, CardDocument) for result in race_results)
+    raced_terminal_stored = await cards.find_by_id(raced_terminal.id)
+    assert raced_terminal_stored is not None
+    assert raced_terminal_stored.status in {CardStatus.ACTIVE, CardStatus.LOST}
 
 
 @pytest.mark.mongo

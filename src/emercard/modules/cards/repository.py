@@ -138,6 +138,129 @@ class CardRepository:
         )
         return _cards(await cursor.to_list(length=None))
 
+    async def list_user_controllable(
+        self, user_id: ObjectId | str, *, session: Any | None = None
+    ) -> list[CardDocument]:
+        """List only cards that a current owner may see and control."""
+
+        identifier = _object_id(user_id)
+        cursor = self._collection.find(
+            {
+                "owner_id": identifier,
+                "is_current": True,
+                "issued_at": {"$type": "date"},
+                "status": {"$in": [CardStatus.ASSIGNED, CardStatus.ACTIVE, CardStatus.DISABLED]},
+            },
+            **_session_kwargs(session),
+        )
+        cards = _cards(await cursor.to_list(length=None))
+        status_order = {
+            CardStatus.ACTIVE: 0,
+            CardStatus.DISABLED: 1,
+            CardStatus.ASSIGNED: 2,
+        }
+        return sorted(
+            cards,
+            key=lambda card: (
+                status_order[card.status],
+                -(card.issued_at.timestamp() if card.issued_at is not None else 0),
+                str(card.id),
+            ),
+        )
+
+    async def find_user_controllable(
+        self,
+        *,
+        card_id: ObjectId | str,
+        user_id: ObjectId | str,
+        session: Any | None = None,
+    ) -> CardDocument | None:
+        """Load one visible issued card without permitting cross-owner access."""
+
+        identifier = _object_id(card_id)
+        owner_id = _object_id(user_id)
+        document = await self._collection.find_one(
+            {
+                "_id": identifier,
+                "owner_id": owner_id,
+                "is_current": True,
+                "issued_at": {"$type": "date"},
+                "status": {"$in": [CardStatus.ASSIGNED, CardStatus.ACTIVE, CardStatus.DISABLED]},
+            },
+            **_session_kwargs(session),
+        )
+        return _card(document)
+
+    async def activate_for_user(
+        self,
+        *,
+        card_id: ObjectId | str,
+        user_id: ObjectId | str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument | None:
+        """Atomically activate an owned, issued, verified card."""
+
+        identifier = _object_id(card_id)
+        owner_id = _object_id(user_id)
+        timestamp = now or utc_now()
+        document = await self._collection.find_one_and_update(
+            {
+                "_id": identifier,
+                "owner_id": owner_id,
+                "is_current": True,
+                "issued_at": {"$type": "date"},
+                "encoding_verified_at": {"$type": "date"},
+                "status": {"$in": [CardStatus.ASSIGNED, CardStatus.DISABLED]},
+            },
+            {
+                "$set": {
+                    "status": CardStatus.ACTIVE,
+                    "is_current": True,
+                    "activated_at": timestamp,
+                    "disabled_at": None,
+                    "updated_at": timestamp,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+            **_session_kwargs(session),
+        )
+        return _card(document)
+
+    async def disable_for_user(
+        self,
+        *,
+        card_id: ObjectId | str,
+        user_id: ObjectId | str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument | None:
+        """Atomically disable an owned, issued active card."""
+
+        identifier = _object_id(card_id)
+        owner_id = _object_id(user_id)
+        timestamp = now or utc_now()
+        document = await self._collection.find_one_and_update(
+            {
+                "_id": identifier,
+                "owner_id": owner_id,
+                "is_current": True,
+                "issued_at": {"$type": "date"},
+                "status": CardStatus.ACTIVE,
+            },
+            {
+                "$set": {
+                    "status": CardStatus.DISABLED,
+                    "is_current": True,
+                    "disabled_at": timestamp,
+                    "updated_at": timestamp,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+            **_session_kwargs(session),
+        )
+        return _card(document)
+
     async def list_admin(
         self,
         *,

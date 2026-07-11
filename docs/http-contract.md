@@ -33,6 +33,22 @@
 - Errors contain a stable error code, Vietnamese human-readable message, optional sanitized Vietnamese validation details, and `request_id`. Frontend integrations should branch on `error.code`, not translated text.
 - CORS uses the configured exact origin allowlist with credentials enabled; wildcard origins and configured cookie domains are rejected by settings.
 
+## User cards
+
+Every route below requires an authenticated user session. Ownership is derived exclusively from the session; a request cannot supply an owner, status, token, hash, issuance, encoding, or admin field.
+
+- `GET /api/v1/me/cards` returns `{ "cards": [] }` when the user has no issued current controllable cards.
+- `GET /api/v1/me/cards/{cardId}` returns one safe card projection. Unknown, malformed, hidden, stale, or another user's card returns neutral `404 card.not_found`.
+- `POST /api/v1/me/cards/{cardId}/activate` activates an issued, encoding-verified owned card from `assigned` or `disabled` when the profile state is `ready_to_publish`.
+- `POST /api/v1/me/cards/{cardId}/disable` disables an owned issued `active` card.
+- Repeated activation of an active card and repeated disablement of a disabled card return `200` without replacing the existing lifecycle timestamp.
+- Activation and disablement are independent single-card operations; multiple cards may remain active and a sibling card is never changed.
+- Existing active cards remain active when the profile later becomes incomplete. Activation and reactivation recheck profile readiness.
+
+User card responses contain only `id`, `serial`, `status`, `is_current`, issuance/activation/disablement and audit timestamps, and derived action flags. They never contain token material, public URLs, owner/admin identifiers, custody history, replacement internals, or medical-profile data.
+
+User-control failures use stable codes: `card.not_issued`, `card.encoding_not_verified`, `card.profile_not_ready`, `card.invalid_state_transition`, `card.terminal`, and `card.service_unavailable` as applicable. Cross-user access remains `card.not_found`.
+
 ## Admin cards
 
 Every route below requires an authenticated administrator:
@@ -48,6 +64,6 @@ Every route below requires an authenticated administrator:
 - `GET /api/v1/admin/cards` supports status, owner, serial, current, derived encoding-state, issued, limit, and cursor filters.
 - `GET /api/v1/admin/cards/{cardId}` returns safe card metadata and a safe owner summary.
 
-Safe card responses never include raw tokens, token hashes, public URLs, medical-profile data, cookies, or authentication secrets. Custody history is persisted internally and is not currently included in card detail. User activation, anonymous lookup, and replacement HTTP routes remain deferred.
+Safe card responses never include raw tokens, token hashes, public URLs, medical-profile data, cookies, or authentication secrets. Custody history is persisted internally and is not currently included in card detail. Anonymous lookup and replacement HTTP routes remain deferred.
 
 See [`card-persistence.md`](card-persistence.md) for lifecycle gates, idempotency, event history, and manual NFC/QR encoding responsibilities.

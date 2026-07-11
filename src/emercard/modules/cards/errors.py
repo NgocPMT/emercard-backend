@@ -37,6 +37,18 @@ class CardEncodingNotVerifiedError(CardError):
     """The card has not passed physical encoding verification."""
 
 
+class CardNotIssuedError(CardError):
+    """The card has not been issued to the owner."""
+
+
+class CardProfileNotReadyError(CardError):
+    """The owner's medical profile is not ready for activation."""
+
+
+class CardServiceUnavailableError(CardError):
+    """A card-control dependency failed without exposing its details."""
+
+
 class CardEncodingMismatchError(CardError):
     """The read-back public link does not match the current card token."""
 

@@ -9,6 +9,7 @@ from emercard.api.admin_card_routes import build_admin_card_router
 from emercard.api.auth_routes import build_auth_router, build_current_user_router
 from emercard.api.errors import error_payload
 from emercard.api.profile_routes import build_profile_router
+from emercard.api.user_card_routes import build_user_card_router
 from emercard.db import Database
 
 
@@ -47,6 +48,7 @@ def build_api_router() -> APIRouter:
     router.include_router(build_auth_router())
     router.include_router(build_current_user_router())
     router.include_router(build_profile_router())
+    router.include_router(build_user_card_router())
     router.include_router(build_admin_card_router())
 
     @router.get("/meta", tags=["infrastructure"])

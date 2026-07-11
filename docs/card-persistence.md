@@ -1,6 +1,6 @@
 # Card Persistence, Provisioning, and Custody
 
-This document describes the backend card foundation and administrator provisioning boundary. It does not add a frontend, direct NFC/QR writing, user activation controls, anonymous lookup, token migration, shipping, or a full audit platform.
+This document describes the backend card foundation, administrator provisioning boundary, and authenticated user card controls. It does not add a frontend, direct NFC/QR writing, anonymous lookup, token migration, shipping, or a full audit platform.
 
 ## Domain boundary
 
@@ -72,6 +72,25 @@ Assignment never changes the physical link. Assignment does not require profile 
 
 Admin custody transitions are guarded by atomic MongoDB predicates. Lost/replaced lifecycle behavior and the existing replacement transaction remain supported.
 
+## User card controls
+
+Users see only their own cards where `owner_id` matches the authenticated session, `is_current=true`, `issued_at` exists, and status is `assigned`, `active`, or `disabled`. Pre-issuance assigned cards and terminal/non-current cards are hidden from list and detail responses.
+
+The user API is:
+
+```text
+GET  /api/v1/me/cards
+GET  /api/v1/me/cards/{cardId}
+POST /api/v1/me/cards/{cardId}/activate
+POST /api/v1/me/cards/{cardId}/disable
+```
+
+Activation accepts `assigned -> active` and `disabled -> active`. It requires issuance, verified encoding, and the owner's derived profile state `ready_to_publish`. Disablement accepts only `active -> disabled`. Repeated same-direction operations are idempotent and preserve the original `activated_at` or `disabled_at` timestamp. Existing active cards are not automatically disabled when profile editing makes the profile incomplete; a later activation/re-activation checks readiness again.
+
+Each operation uses an atomic single-card conditional update. Status changes never modify sibling cards, so one owner may have multiple active cards. Concurrent same-direction calls converge on the same result; a committed terminal admin transition prevents later user control. The profile read and card write are intentionally not one transaction.
+
+User responses are explicit safe projections and exclude raw tokens, token hashes, public URLs, owner/admin identifiers, custody history, replacement internals, and medical-profile content.
+
 ## Custody history and idempotency
 
 Administrative ownership operations append events to `card_custody_events`:
@@ -110,7 +129,7 @@ Provisioning request bodies and generated URLs must not be logged. Generic reque
 
 ## Deferred consumers
 
-The following remain out of scope: admin frontend, NFC writer integration, QR rendering, user activation/disablement routes, anonymous emergency lookup, lost/replacement HTTP workflows, shipping, payments, batches, scan history, full audit UI, and legacy profile-token migration.
+The following remain out of scope: admin frontend, NFC writer integration, QR rendering, anonymous emergency lookup, lost/replacement HTTP workflows, shipping, payments, batches, scan history, full audit UI, and legacy profile-token migration.
 
 ## Verification
 

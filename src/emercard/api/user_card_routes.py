@@ -1,0 +1,90 @@
+"""Authenticated owner-scoped card-control routes."""
+
+from typing import Any
+
+from fastapi import APIRouter, Depends, Request
+
+from emercard.api.auth_routes import get_current_user
+from emercard.modules.cards import (
+    CardRepository,
+    CardService,
+    UserCardListOutput,
+    UserCardOutput,
+    to_user_card,
+)
+from emercard.modules.profiles.repository import ProfileRepository
+from emercard.modules.users import CurrentUserOutput, UserRepository
+
+
+def build_user_card_router() -> APIRouter:
+    router = APIRouter(tags=["user cards"])
+
+    @router.get("/me/cards", response_model=UserCardListOutput)
+    async def list_my_cards(  # pyright: ignore[reportUnusedFunction]
+        user: CurrentUserOutput = Depends(get_current_user),  # noqa: B008
+        service: CardService = Depends(get_user_card_service),  # noqa: B008
+    ) -> UserCardListOutput:
+        cards = await service.list_user_cards(user_id=user.id)
+        return UserCardListOutput(cards=[to_user_card(card) for card in cards])
+
+    @router.get("/me/cards/{card_id}", response_model=UserCardOutput)
+    async def get_my_card(  # pyright: ignore[reportUnusedFunction]
+        card_id: str,
+        user: CurrentUserOutput = Depends(get_current_user),  # noqa: B008
+        service: CardService = Depends(get_user_card_service),  # noqa: B008
+    ) -> UserCardOutput:
+        card = await service.get_user_card(card_id=card_id, user_id=user.id)
+        return to_user_card(card)
+
+    @router.post("/me/cards/{card_id}/activate", response_model=UserCardOutput)
+    async def activate_my_card(  # pyright: ignore[reportUnusedFunction]
+        card_id: str,
+        user: CurrentUserOutput = Depends(get_current_user),  # noqa: B008
+        service: CardService = Depends(get_user_card_service),  # noqa: B008
+    ) -> UserCardOutput:
+        card = await service.activate_user_card(card_id=card_id, user_id=user.id)
+        return to_user_card(card)
+
+    @router.post("/me/cards/{card_id}/disable", response_model=UserCardOutput)
+    async def disable_my_card(  # pyright: ignore[reportUnusedFunction]
+        card_id: str,
+        user: CurrentUserOutput = Depends(get_current_user),  # noqa: B008
+        service: CardService = Depends(get_user_card_service),  # noqa: B008
+    ) -> UserCardOutput:
+        card = await service.disable_user_card(card_id=card_id, user_id=user.id)
+        return to_user_card(card)
+
+    return router
+
+
+async def get_user_card_service(request: Request) -> CardService:
+    """Build the user-control service without admin mutation dependencies."""
+
+    card_repository: Any = getattr(request.app.state, "card_repository", None)
+    if card_repository is None:
+        card_repository = CardRepository(
+            request.app.state.database.database,
+            request.app.state.settings,
+        )
+
+    user_repository: Any = getattr(request.app.state, "card_user_repository", None)
+    if user_repository is None:
+        user_repository = getattr(request.app.state, "auth_repository", None)
+    if user_repository is None:
+        user_repository = UserRepository(
+            request.app.state.database.database,
+            request.app.state.settings,
+        )
+
+    profile_repository: Any = getattr(request.app.state, "profile_repository", None)
+    if profile_repository is None:
+        profile_repository = ProfileRepository(
+            request.app.state.database.database,
+            request.app.state.settings,
+        )
+
+    return CardService(
+        card_repository,
+        user_repository,
+        profile_repository=profile_repository,
+    )
