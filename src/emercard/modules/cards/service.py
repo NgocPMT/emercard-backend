@@ -69,6 +69,10 @@ class CardRepositoryProtocol(Protocol):
         self, card_id: ObjectId | str, *, session: Any | None = None
     ) -> CardDocument | None: ...
 
+    async def find_publicly_resolvable_by_token_hash(
+        self, token_hash: str, *, session: Any | None = None
+    ) -> CardDocument | None: ...
+
     async def create_blank_card(
         self,
         *,

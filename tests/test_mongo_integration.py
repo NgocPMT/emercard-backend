@@ -5,6 +5,7 @@ import os
 from unittest.mock import AsyncMock
 
 import pytest
+from bson import ObjectId
 from pymongo.errors import OperationFailure
 
 from emercard.core.config import Settings
@@ -34,6 +35,8 @@ from emercard.modules.cards import (
     generate_serial,
     hash_public_token,
 )
+from emercard.modules.emergency import EmergencyLookupService
+from emercard.modules.emergency.errors import EmergencyProfileNotFoundError
 from emercard.modules.profiles import ProfileRepository, ProfileUpsertInput
 from emercard.modules.users import UserRepository
 
@@ -389,6 +392,144 @@ async def test_real_mongo_custody_event_is_atomic_with_assignment(mongo_context)
         {"card_id": blank.id, "event_type": "assigned"}
     )
     assert events == 1
+
+
+@pytest.mark.mongo
+@pytest.mark.asyncio
+async def test_real_mongo_public_lookup_filters_lifecycle_and_supports_multiple_active_cards(
+    mongo_context,
+) -> None:
+    database, settings = mongo_context
+    users = UserRepository(database, settings)
+    cards = CardRepository(database, settings)
+    profiles = ProfileRepository(database, settings)
+    owner = await users.create(email="emergency-owner@example.com", password_hash="argon2-hash")
+    admin = await users.create(
+        email="emergency-admin@example.com", password_hash="argon2-hash", role="admin"
+    )
+    await profiles.upsert_for_user(
+        user_id=owner.id,
+        profile=ProfileUpsertInput(
+            display_name="Emergency Owner",
+            birth_year=1995,
+            gender="male",
+            blood_type="O+",
+            emergency_contacts=[
+                {"name": "Contact", "relationship": "Family", "phone": "0900000000"}
+            ],
+        ),
+    )
+    user_service = CardService(cards, users, profile_repository=profiles)
+
+    async def create_active_card() -> tuple[CardDocument, str]:
+        provisioning = await CardService(cards, users).provision_unassigned()
+        confirmed = await cards.confirm_encoding(
+            card_id=provisioning.card.id,
+            token_hash=hash_public_token(provisioning.public_token),
+            admin_id=admin.id,
+        )
+        assert confirmed is not None
+        assigned = await user_service.assign_verified_to_user(
+            card_id=provisioning.card.id,
+            user_id=owner.id,
+            admin_id=admin.id,
+        )
+        issued = await user_service.issue(card_id=assigned.id, admin_id=admin.id)
+        active = await user_service.activate_user_card(card_id=issued.id, user_id=owner.id)
+        assert active.status is CardStatus.ACTIVE
+        return active, provisioning.public_token
+
+    first, first_token = await create_active_card()
+    second, second_token = await create_active_card()
+    lookup = EmergencyLookupService(cards, profiles)
+
+    first_result = await lookup.lookup(first_token)
+    second_result = await lookup.lookup(second_token)
+    assert first_result.display_name == "Emergency Owner"
+    assert second_result.display_name == "Emergency Owner"
+
+    ineligible_cases = {
+        "assigned": {"status": CardStatus.ASSIGNED},
+        "disabled": {"status": CardStatus.DISABLED},
+        "lost": {"status": CardStatus.LOST},
+        "replaced": {"status": CardStatus.REPLACED},
+        "void": {"status": CardStatus.VOID},
+        "non-current": {"is_current": False},
+        "ownerless": {"owner_id": None},
+        "missing-profile": {"owner_id": ObjectId()},
+    }
+    for name, updates in ineligible_cases.items():
+        token = f"ineligible-{name}-token"
+        document = first.model_copy(
+            update={
+                "id": ObjectId(),
+                "serial": generate_serial(),
+                "token_hash": hash_public_token(token),
+                **updates,
+            }
+        ).model_dump(by_alias=True, mode="python")
+        await database[settings.mongodb_cards_collection].insert_one(document)
+        with pytest.raises(EmergencyProfileNotFoundError):
+            await lookup.lookup(token)
+
+    await user_service.disable_user_card(card_id=first.id, user_id=owner.id)
+    with pytest.raises(EmergencyProfileNotFoundError):
+        await lookup.lookup(first_token)
+
+    await user_service.activate_user_card(card_id=first.id, user_id=owner.id)
+    assert (await lookup.lookup(first_token)).display_name == "Emergency Owner"
+    assert (await lookup.lookup(second_token)).display_name == "Emergency Owner"
+
+    await user_service.mark_lost(card_id=first.id)
+    with pytest.raises(EmergencyProfileNotFoundError):
+        await lookup.lookup(first_token)
+    assert (await lookup.lookup(second_token)).display_name == "Emergency Owner"
+
+    index_info = await database[settings.mongodb_cards_collection].index_information()
+    assert CARDS_TOKEN_HASH_INDEX in index_info
+    assert index_info[CARDS_TOKEN_HASH_INDEX]["unique"] is True
+
+
+@pytest.mark.mongo
+@pytest.mark.asyncio
+async def test_real_mongo_replacement_blocks_the_old_emergency_token(mongo_context) -> None:
+    database, settings = mongo_context
+    hello = await database.client.admin.command("hello")
+    if not hello.get("setName"):
+        pytest.skip("MongoDB replacement verification requires a replica set")
+
+    users = UserRepository(database, settings)
+    cards = CardRepository(database, settings)
+    profiles = ProfileRepository(database, settings)
+    owner = await users.create(email="replacement-lookup@example.com", password_hash="argon2-hash")
+    admin = await users.create(
+        email="replacement-lookup-admin@example.com", password_hash="argon2-hash", role="admin"
+    )
+    await profiles.upsert_for_user(
+        user_id=owner.id,
+        profile=ProfileUpsertInput(display_name="Replacement Owner", emergency_contacts=[]),
+    )
+    card_service = CardService(cards, users)
+    provisioning = await card_service.provision_unassigned()
+    confirmed = await cards.confirm_encoding(
+        card_id=provisioning.card.id,
+        token_hash=hash_public_token(provisioning.public_token),
+        admin_id=admin.id,
+    )
+    assert confirmed is not None
+    assigned = await card_service.assign_verified_to_user(
+        card_id=provisioning.card.id, user_id=owner.id, admin_id=admin.id
+    )
+    issued = await card_service.issue(card_id=assigned.id, admin_id=admin.id)
+    active = await card_service.activate(card_id=issued.id, owner_id=owner.id)
+    lookup = EmergencyLookupService(cards, profiles)
+    assert (await lookup.lookup(provisioning.public_token)).display_name == "Replacement Owner"
+
+    replacement = await card_service.replace(card_id=active.id)
+
+    assert replacement.card.replaces_card_id == active.id
+    with pytest.raises(EmergencyProfileNotFoundError):
+        await lookup.lookup(provisioning.public_token)
 
 
 @pytest.mark.mongo

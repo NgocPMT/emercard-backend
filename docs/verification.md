@@ -30,6 +30,15 @@ EMERCARD_TEST_MONGODB_URI=<disposable-replica-set-uri> uv run pytest -m mongo
 
 Replacement and custody-event transaction coverage requires a replica-set-capable MongoDB. Card-specific invariants, admin gates, safe output rules, and manual NFC/QR verification are documented in [`card-persistence.md`](card-persistence.md).
 
+Anonymous emergency lookup verification should additionally confirm:
+
+- active/current/issued/encoding-verified cards resolve through the constrained token-hash query;
+- disabled, lost, replaced, void, non-current, assigned, unknown, malformed, ownerless, and missing-profile cases return the neutral 404;
+- multiple active cards for one owner resolve independently;
+- disablement blocks the unchanged physical URL and reactivation restores it;
+- success and error responses contain the required no-store/noindex privacy headers;
+- request logs contain only the route template and low-cardinality outcome, never token-bearing paths or hashes.
+
 ## Smoke checks
 
 For health and readiness checks, follow [`smoke-checks.md`](smoke-checks.md). `/health` is a process liveness check and remains successful if MongoDB is stopped; `/ready` reports database readiness and returns `503` with a safe error envelope when MongoDB is unavailable. `X-Request-ID` is generated or safely propagated on responses.

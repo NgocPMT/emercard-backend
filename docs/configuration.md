@@ -21,6 +21,14 @@ The default MongoDB collections are `users`, `medical_profiles`, `cards`, `card_
 
 `EMERCARD_PUBLIC_CARD_BASE_URL` configures the exact absolute URL prefix used for physical card links, for example `https://app.emercard.id.vn/e`. It must not contain a query or fragment. Provisioning responses are the only API responses that contain a raw card URL/token and are marked `Cache-Control: no-store`.
 
+Anonymous emergency lookup uses these bounded settings:
+
+- `EMERCARD_EMERGENCY_TOKEN_MAX_LENGTH` defaults to `128`; generated Phase 1 tokens are 43 URL-safe characters.
+- `EMERCARD_EMERGENCY_RATE_LIMIT_WINDOW_SECONDS` defaults to `60`.
+- `EMERCARD_EMERGENCY_RATE_LIMIT_BURST` defaults to `30` requests per direct peer in that sliding window.
+
+The in-process limiter is per worker and is not DDoS protection. Do not trust `X-Forwarded-For` unless a future deployment-specific trusted-proxy boundary is implemented; use edge/WAF controls for distributed abuse protection.
+
 ## Admin custody operations
 
 Custody mutations write append-only events transactionally with the card mutation. Use a replica-set-capable MongoDB for admin operations that require event atomicity. Blank-card creation uses the durable `idempotency_keys` collection; operation keys currently have no TTL and must be retained according to the deployment's operational policy.

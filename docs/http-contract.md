@@ -66,4 +66,14 @@ Every route below requires an authenticated administrator:
 
 Safe card responses never include raw tokens, token hashes, public URLs, medical-profile data, cookies, or authentication secrets. Custody history is persisted internally and is not currently included in card detail. Anonymous lookup and replacement HTTP routes remain deferred.
 
+## Anonymous emergency lookup
+
+- `GET /api/v1/emergency/{token}` is anonymous and does not require a session or bearer credential.
+- The API hashes the raw bearer token before using the constrained card lookup. Only active, current, issued, encoding-verified cards with an owner resolve.
+- Success returns `{ "profile": ... }` using the public medical allowlist. It includes `profile_updated_at` and excludes account/card identifiers, serials, token material, contact IDs, `public_access`, profile state, and private metadata.
+- Malformed, unknown, unassigned, assigned, disabled, lost, replaced, void, non-current, ownerless, and missing-profile cases all return `404 emergency_profile.not_found` with the same neutral message. Dependency outages return `503 emergency_profile.service_unavailable`.
+- All lookup responses use `Cache-Control: no-store`, `Pragma: no-cache`, `X-Robots-Tag: noindex, nofollow, noarchive`, `Referrer-Policy: no-referrer`, and `X-Content-Type-Options: nosniff`.
+- Anonymous requests use an emergency-friendly per-direct-peer sliding-window rate limit and return `429 rate_limit.exceeded` without token-dependent detail. Forwarded headers are not trusted.
+- Request logs use `/api/v1/emergency/{token}` as the route template and never include the raw path, token/hash, query string, referrer, request body, or response body.
+
 See [`card-persistence.md`](card-persistence.md) for lifecycle gates, idempotency, event history, and manual NFC/QR encoding responsibilities.

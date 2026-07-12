@@ -158,6 +158,7 @@ def test_public_output_is_an_explicit_allowlist() -> None:
             "emergency_contacts": [
                 {"name": "Sam Example", "relationship": "Friend", "phone": "0901234567"}
             ],
+            "profile_updated_at": "2026-01-01T00:00:00Z",
         }
     )
     serialized = output.model_dump()

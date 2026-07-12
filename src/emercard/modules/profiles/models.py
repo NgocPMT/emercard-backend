@@ -358,6 +358,7 @@ class PublicProfileOutput(ProfileModel):
     critical_medications: list[str]
     emergency_note: str | None
     emergency_contacts: list[EmergencyContactPublic]
+    profile_updated_at: UtcDateTime
 
 
 def _public_contacts(profile: ProfileDocument) -> list[EmergencyContactPublic]:
@@ -403,6 +404,7 @@ def to_public_profile(profile: ProfileDocument) -> PublicProfileOutput:
         critical_medications=list(profile.critical_medications),
         emergency_note=profile.emergency_note,
         emergency_contacts=_public_contacts(profile),
+        profile_updated_at=profile.updated_at,
     )
 
 

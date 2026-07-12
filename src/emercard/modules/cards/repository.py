@@ -112,6 +112,28 @@ class CardRepository:
         )
         return _card(document)
 
+    async def find_publicly_resolvable_by_token_hash(
+        self, token_hash: str, *, session: Any | None = None
+    ) -> CardDocument | None:
+        """Resolve only cards that are currently safe for anonymous lookup."""
+
+        try:
+            canonical_hash = validate_token_hash(token_hash)
+        except CardInvariantError as error:
+            raise InvalidIdentifierError("invalid card token hash") from error
+        document = await self._collection.find_one(
+            {
+                "token_hash": canonical_hash,
+                "status": CardStatus.ACTIVE,
+                "is_current": True,
+                "owner_id": {"$type": "objectId"},
+                "issued_at": {"$type": "date"},
+                "encoding_verified_at": {"$type": "date"},
+            },
+            **_session_kwargs(session),
+        )
+        return _card(document)
+
     async def list_for_user(
         self, user_id: ObjectId | str, *, session: Any | None = None
     ) -> list[CardDocument]:

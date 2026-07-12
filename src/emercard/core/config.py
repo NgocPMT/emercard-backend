@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     public_link_route_prefix: str = "/p"
     public_link_explicit_publication: bool = True
     public_card_base_url: str = "http://localhost:8000/e"
+    emergency_token_max_length: Annotated[int, Field(ge=43, le=512)] = 128
+    emergency_rate_limit_window_seconds: Annotated[int, Field(ge=1, le=3_600)] = 60
+    emergency_rate_limit_burst: Annotated[int, Field(ge=1, le=10_000)] = 30
 
     # Reserved for the authentication stage; no authentication is implemented here.
     auth_secret: SecretStr | None = None

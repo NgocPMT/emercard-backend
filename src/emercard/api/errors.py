@@ -25,6 +25,7 @@ from emercard.modules.cards.errors import (
     CardTerminalStateError,
     CardUserNotFoundError,
 )
+from emercard.modules.emergency.errors import EmergencyLookupError
 from emercard.modules.profiles.exceptions import ProfileError
 
 
@@ -59,6 +60,13 @@ def auth_exception_handler(request: Request, exc: AuthError) -> JSONResponse:
 
 
 def profile_exception_handler(request: Request, exc: ProfileError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=error_payload(request, code=exc.code, message=exc.message),
+    )
+
+
+def emergency_exception_handler(request: Request, exc: EmergencyLookupError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
         content=error_payload(request, code=exc.code, message=exc.message),

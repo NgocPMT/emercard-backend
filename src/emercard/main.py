@@ -13,17 +13,19 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from emercard.api.errors import (
     auth_exception_handler,
     card_exception_handler,
+    emergency_exception_handler,
     http_exception_handler,
     profile_exception_handler,
     unhandled_exception_handler,
     validation_exception_handler,
 )
-from emercard.api.middleware import request_context_middleware
+from emercard.api.middleware import EmergencyRateLimiter, request_context_middleware
 from emercard.api.routes import build_api_router, build_infrastructure_router
 from emercard.core.config import Settings, get_settings
 from emercard.db import Database, initialize_indexes
 from emercard.modules.auth.exceptions import AuthError
 from emercard.modules.cards.errors import CardError
+from emercard.modules.emergency.errors import EmergencyLookupError
 from emercard.modules.profiles.exceptions import ProfileError
 
 
@@ -48,6 +50,7 @@ def create_app(
     card_user_repository: Any | None = None,
     idempotency_repository: Any | None = None,
     custody_event_repository: Any | None = None,
+    emergency_rate_limiter: Any | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     logging.getLogger("emercard.request").setLevel(app_settings.log_level)
@@ -59,6 +62,10 @@ def create_app(
     )
     app.state.settings = app_settings
     app.state.database = database or Database(app_settings)
+    app.state.emergency_rate_limiter = emergency_rate_limiter or EmergencyRateLimiter(
+        window_seconds=app_settings.emergency_rate_limit_window_seconds,
+        burst=app_settings.emergency_rate_limit_burst,
+    )
     if auth_repository is not None:
         app.state.auth_repository = auth_repository
     if profile_repository is not None:
@@ -71,6 +78,8 @@ def create_app(
         app.state.idempotency_repository = idempotency_repository
     if custody_event_repository is not None:
         app.state.custody_event_repository = custody_event_repository
+    if emergency_rate_limiter is not None:
+        app.state.emergency_rate_limiter = emergency_rate_limiter
 
     app.add_middleware(
         CORSMiddleware,
@@ -84,6 +93,7 @@ def create_app(
     app.add_exception_handler(AuthError, cast(Any, auth_exception_handler))
     app.add_exception_handler(CardError, cast(Any, card_exception_handler))
     app.add_exception_handler(ProfileError, cast(Any, profile_exception_handler))
+    app.add_exception_handler(EmergencyLookupError, cast(Any, emergency_exception_handler))
     app.add_exception_handler(StarletteHTTPException, cast(Any, http_exception_handler))
     app.add_exception_handler(RequestValidationError, cast(Any, validation_exception_handler))
     app.add_exception_handler(Exception, cast(Any, unhandled_exception_handler))
