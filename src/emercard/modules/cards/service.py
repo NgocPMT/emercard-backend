@@ -777,7 +777,7 @@ class CardService:
         token = self._token_from_url(public_url)
         card = await self._require_card(card_id)
         token_hash = hash_public_token(token)
-        if card.token_hash is None:
+        if card.legacy_token_hash is None:
             if (
                 self._card_link_assignment_repository is None
                 or self._public_access_link_repository is None
@@ -804,7 +804,7 @@ class CardService:
         if card.provisioned_at is None:
             raise CardEncodingNotVerifiedError("card link has not been provisioned")
         if card.encoding_verified_at is not None:
-            if card.token_hash != token_hash:
+            if card.legacy_token_hash != token_hash:
                 raise CardEncodingMismatchError("encoded card link does not match")
             return card
         confirmed = await self._repository.confirm_encoding(
@@ -831,7 +831,7 @@ class CardService:
         if user is None or getattr(user, "role", None) != "user":
             raise CardAssignmentTargetInvalidError("card assignment target is invalid")
         card = await self._require_card(card_id)
-        if card.encoding_verified_at is None or card.token_hash is None:
+        if card.encoding_verified_at is None or card.legacy_token_hash is None:
             raise CardEncodingNotVerifiedError("card encoding has not been verified")
 
         async def mutate(session: Any | None = None) -> CardDocument:

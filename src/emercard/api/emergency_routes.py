@@ -17,8 +17,8 @@ def build_emergency_router() -> APIRouter:
         token: str,
         service: EmergencyLookupService = Depends(get_emergency_lookup_service),  # noqa: B008
     ) -> EmergencyProfileResponse:
-        profile = await service.lookup(token)
-        return EmergencyProfileResponse(profile=profile)
+        result = await service.lookup(token)
+        return EmergencyProfileResponse(profile=result.profile)
 
     return router
 
@@ -40,8 +40,11 @@ async def get_emergency_lookup_service(request: Request) -> EmergencyLookupServi
             request.app.state.settings,
         )
 
+    assignment_repository: Any = getattr(request.app.state, "card_link_assignment_repository", None)
+
     return EmergencyLookupService(
         link_repository,
         profile_repository,
+        assignment_repository=assignment_repository,
         token_max_length=request.app.state.settings.emergency_token_max_length,
     )

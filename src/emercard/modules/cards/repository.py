@@ -45,17 +45,19 @@ class CardRepository:
         canonical_serial = normalize_serial(serial)
         canonical_hash = validate_token_hash(token_hash) if token_hash is not None else None
         replacement_id = _optional_object_id(replaces_card_id)
-        document = CardDocument(
-            _id=ObjectId(),
-            serial=canonical_serial,
-            owner_id=None,
-            token_hash=canonical_hash,
-            provisioned_at=timestamp if canonical_hash is not None else None,
-            status=CardStatus.UNASSIGNED,
-            is_current=False,
-            replaces_card_id=replacement_id,
-            created_at=timestamp,
-            updated_at=timestamp,
+        document = CardDocument.model_validate(
+            {
+                "_id": ObjectId(),
+                "serial": canonical_serial,
+                "owner_id": None,
+                "token_hash": canonical_hash,
+                "provisioned_at": timestamp if canonical_hash is not None else None,
+                "status": CardStatus.UNASSIGNED,
+                "is_current": False,
+                "replaces_card_id": replacement_id,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            }
         )
         persisted = _persisted(document)
         try:

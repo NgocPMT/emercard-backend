@@ -15,6 +15,10 @@ from emercard.core.config import Settings
 from emercard.db import public_profile_links as public_profile_links_module
 from emercard.db.repositories import RepositoryConflictError, RepositoryError
 from emercard.main import create_app
+from emercard.modules.card_link_assignments import (
+    CardLinkAssignmentDocument,
+    CardLinkAssignmentStatus,
+)
 from emercard.modules.cards import hash_public_token
 from emercard.modules.profiles import ProfileDocument
 from emercard.modules.public_links import (
@@ -417,6 +421,23 @@ class FailingPublicLinkRepository(FakePublicLinkRepository):
         raise RepositoryError("link store unavailable")
 
 
+class InMemoryAssignmentRepository:
+    def __init__(self, assignment: CardLinkAssignmentDocument | None) -> None:
+        self.assignment = assignment
+        self.calls: list[str] = []
+
+    async def find_active_by_public_access_link_id(
+        self, public_access_link_id: ObjectId | str, *, session: object | None = None
+    ) -> CardLinkAssignmentDocument | None:
+        del session
+        self.calls.append(str(public_access_link_id))
+        if self.assignment is not None and str(self.assignment.public_access_link_id) == str(
+            public_access_link_id
+        ):
+            return self.assignment
+        return None
+
+
 class FlakyLifecycleLinkRepository(InMemoryLinkRepository):
     def __init__(self, link: PublicAccessLinkDocument | None = None) -> None:
         super().__init__(link)
@@ -659,6 +680,40 @@ def test_profile_preview_link_route_returns_public_url() -> None:
     ]
 
 
+def test_profile_preview_link_routes_support_generate_regenerate_and_disable() -> None:
+    link_repository = InMemoryLinkRepository(None)
+    profile_repository = InMemoryProfileRepository(ready_profile())
+    app = create_app(
+        settings=settings(),
+        database=FakeDatabase(ready=True),
+        public_access_link_repository=link_repository,
+        profile_repository=profile_repository,
+    )
+    app.dependency_overrides[get_current_user] = lambda: CurrentUserOutput(
+        id=str(OWNER_ID),
+        email="alex@example.test",
+        role="user",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    with TestClient(app) as client:
+        generated = client.post("/api/v1/me/profile/public-preview-link/generate")
+        regenerated = client.post("/api/v1/me/profile/public-preview-link/regenerate")
+        disabled = client.post("/api/v1/me/profile/public-preview-link/disable")
+
+    assert generated.status_code == 200
+    assert regenerated.status_code == 200
+    assert disabled.status_code == 200
+    assert generated.json()["action"] == "generate"
+    assert regenerated.json()["action"] == "regenerate"
+    assert regenerated.json()["status"] == "rotated"
+    assert disabled.json()["action"] == "disable"
+    assert disabled.json()["status"] == "disabled"
+    assert disabled.json()["public_url"] is None
+    assert "raw_token" not in generated.text + regenerated.text + disabled.text
+
+
 @pytest.mark.asyncio
 async def test_public_preview_link_route_issues_fresh_urls_each_time() -> None:
     link_repository = InMemoryLinkRepository(None)
@@ -691,6 +746,42 @@ async def test_public_lookup_reflects_profile_updates_on_the_same_token() -> Non
 
     second = await service.lookup(TOKEN)
     assert second.blood_type == "A+"
+
+
+@pytest.mark.asyncio
+async def test_public_lookup_includes_safe_card_attribution_when_available() -> None:
+    link = link_document(
+        token_hash=hash_public_token(TOKEN),
+        purpose=PublicLinkPurpose.CARD,
+        label="Card access",
+    )
+    assignment = CardLinkAssignmentDocument.model_validate(
+        {
+            "_id": ObjectId("507f1f77bcf86cd799439015"),
+            "card_id": ObjectId("507f1f77bcf86cd799439016"),
+            "public_access_link_id": link.id,
+            "status": CardLinkAssignmentStatus.ACTIVE,
+            "attached_at": NOW,
+            "updated_at": NOW,
+            "attached_by_admin_id": ObjectId("507f1f77bcf86cd799439017"),
+            "disabled_at": None,
+            "disabled_by_admin_id": None,
+            "detached_at": None,
+            "detached_by_admin_id": None,
+            "detach_reason": None,
+        }
+    )
+    result = await PublicProfileLookupService(
+        InMemoryLinkRepository(link),
+        InMemoryProfileRepository(ready_profile()),
+        assignment_repository=InMemoryAssignmentRepository(assignment),
+    ).lookup(TOKEN)
+
+    assert result.display_name == "Alex Example"
+    assert result.link_id == str(link.id)
+    assert result.purpose is PublicLinkPurpose.CARD
+    assert result.assignment_id == str(assignment.id)
+    assert result.card_id == str(assignment.card_id)
 
 
 @pytest.mark.asyncio

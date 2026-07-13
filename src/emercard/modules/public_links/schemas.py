@@ -19,3 +19,13 @@ class PublicProfilePreviewLinkResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     public_url: str
+
+
+class PublicProfileLinkOperationResponse(BaseModel):
+    """Safe envelope for standalone link lifecycle operations."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: str
+    status: str
+    public_url: str | None = None

@@ -10,6 +10,10 @@ from emercard.api.middleware import EmergencyRateLimiter
 from emercard.core.config import Settings
 from emercard.db.repositories import RepositoryError
 from emercard.main import create_app
+from emercard.modules.card_link_assignments import (
+    CardLinkAssignmentDocument,
+    CardLinkAssignmentStatus,
+)
 from emercard.modules.cards import hash_public_token
 from emercard.modules.emergency import EmergencyLookupService
 from emercard.modules.emergency.errors import (
@@ -121,6 +125,23 @@ def settings(**overrides: object) -> Settings:
     )
 
 
+class FakeAssignmentRepository:
+    def __init__(self, assignment: CardLinkAssignmentDocument | None) -> None:
+        self.assignment = assignment
+        self.calls: list[str] = []
+
+    async def find_active_by_public_access_link_id(
+        self, public_access_link_id: ObjectId | str, *, session: object | None = None
+    ) -> CardLinkAssignmentDocument | None:
+        del session
+        self.calls.append(str(public_access_link_id))
+        if self.assignment is not None and str(self.assignment.public_access_link_id) == str(
+            public_access_link_id
+        ):
+            return self.assignment
+        return None
+
+
 def make_client(
     *,
     link: PublicAccessLinkDocument | None,
@@ -151,6 +172,38 @@ async def test_lookup_hashes_raw_token_and_uses_only_constrained_repository_meth
     assert profiles.calls == [str(PROFILE_ID)]
     assert "legacy-secret" not in result.model_dump_json()
     assert "internal-contact-id" not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_lookup_includes_safe_card_attribution_when_available() -> None:
+    link = active_link()
+    assignment = CardLinkAssignmentDocument.model_validate(
+        {
+            "_id": ObjectId("507f1f77bcf86cd799439015"),
+            "card_id": ObjectId("507f1f77bcf86cd799439016"),
+            "public_access_link_id": link.id,
+            "status": CardLinkAssignmentStatus.ACTIVE,
+            "attached_at": NOW,
+            "updated_at": NOW,
+            "attached_by_admin_id": ObjectId("507f1f77bcf86cd799439017"),
+            "disabled_at": None,
+            "disabled_by_admin_id": None,
+            "detached_at": None,
+            "detached_by_admin_id": None,
+            "detach_reason": None,
+        }
+    )
+    result = await EmergencyLookupService(
+        FakeLinkRepository(link),
+        FakeProfileRepository(profile_document()),
+        assignment_repository=FakeAssignmentRepository(assignment),
+    ).lookup(TOKEN)
+
+    assert result.display_name == "Alex Example"
+    assert result.link_id == str(link.id)
+    assert result.purpose is PublicLinkPurpose.CARD
+    assert result.assignment_id == str(assignment.id)
+    assert result.card_id == str(assignment.card_id)
 
 
 @pytest.mark.asyncio

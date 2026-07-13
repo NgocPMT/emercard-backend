@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from emercard.core.types import ObjectIdValue, UtcDateTime
 from emercard.modules.cards.identity import validate_token_hash
+from emercard.modules.profiles.models import PublicProfileOutput
 
 
 class PublicLinkPurpose(StrEnum):
@@ -102,6 +103,20 @@ class PublicProfileLinkResult:
     disabled: bool = False
     link_id: str | None = None
     purpose: PublicLinkPurpose | None = None
+
+
+@dataclass(frozen=True)
+class PublicProfileLookupResult:
+    """Anonymous lookup result with internal attribution metadata."""
+
+    profile: PublicProfileOutput
+    link_id: str
+    purpose: PublicLinkPurpose
+    assignment_id: str | None = None
+    card_id: str | None = None
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.profile, name)
 
 
 PublicAccessLinkDocuments = list[PublicAccessLinkDocument]

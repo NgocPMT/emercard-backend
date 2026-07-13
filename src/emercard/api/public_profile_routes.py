@@ -20,8 +20,8 @@ def build_public_profile_router() -> APIRouter:
         token: str,
         service: PublicProfileLookupService = Depends(get_public_profile_lookup_service),  # noqa: B008
     ) -> PublicProfileResponse:
-        profile = await service.lookup(token)
-        return PublicProfileResponse(profile=profile)
+        result = await service.lookup(token)
+        return PublicProfileResponse(profile=result.profile)
 
     return router
 
@@ -43,8 +43,11 @@ async def get_public_profile_lookup_service(request: Request) -> PublicProfileLo
             request.app.state.settings,
         )
 
+    assignment_repository: Any = getattr(request.app.state, "card_link_assignment_repository", None)
+
     return PublicProfileLookupService(
         link_repository,
         profile_repository,
+        assignment_repository=assignment_repository,
         token_max_length=request.app.state.settings.emergency_token_max_length,
     )

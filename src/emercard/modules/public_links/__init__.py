@@ -19,9 +19,11 @@ from emercard.modules.public_links.models import (
     PublicAccessLinkStatus,
     PublicLinkPurpose,
     PublicProfileLinkResult,
+    PublicProfileLookupResult,
 )
 from emercard.modules.public_links.repository import PublicAccessLinkRepository
 from emercard.modules.public_links.schemas import (
+    PublicProfileLinkOperationResponse,
     PublicProfilePreviewLinkResponse,
     PublicProfileResponse,
 )
@@ -37,10 +39,12 @@ __all__ = [
     "PublicProfileError",
     "PublicProfileExpiredError",
     "PublicProfileLinkResult",
+    "PublicProfileLookupResult",
     "PublicProfileLinkService",
     "PublicProfileLookupService",
     "PublicProfileNotFoundError",
     "PublicProfileNotReadyError",
+    "PublicProfileLinkOperationResponse",
     "PublicProfilePreviewLinkResponse",
     "PublicProfileResponse",
     "PublicProfileRevokedError",

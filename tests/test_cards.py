@@ -274,7 +274,7 @@ class AdminFakeCardRepository:
         self, *, card_id: ObjectId | str, token_hash: str, **kwargs: Any
     ) -> CardDocument | None:
         card = self.cards[ObjectId(card_id)]
-        updated = card.model_copy(update={"token_hash": token_hash, "provisioned_at": NOW})
+        updated = card.model_copy(update={"legacy_token_hash": token_hash, "provisioned_at": NOW})
         self.cards[updated.id] = updated
         return updated
 
@@ -284,7 +284,7 @@ class AdminFakeCardRepository:
         card = self.cards[ObjectId(card_id)]
         updated = card.model_copy(
             update={
-                "token_hash": token_hash,
+                "legacy_token_hash": token_hash,
                 "provisioned_at": NOW,
             }
         )
@@ -300,7 +300,7 @@ class AdminFakeCardRepository:
         **kwargs: Any,
     ) -> CardDocument | None:
         card = self.cards[ObjectId(card_id)]
-        if card.token_hash != token_hash:
+        if card.legacy_token_hash != token_hash:
             return None
         updated = card.model_copy(
             update={"encoding_verified_at": NOW, "encoded_by_admin_id": ObjectId(admin_id)}

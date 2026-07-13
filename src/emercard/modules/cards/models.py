@@ -33,7 +33,9 @@ class CardDocument(CardModel):
     id: ObjectIdValue = Field(alias="_id")
     serial: str = Field(min_length=20, max_length=24)
     owner_id: ObjectIdValue | None = None
-    token_hash: str | None = Field(default=None, min_length=67, max_length=67)
+    legacy_token_hash: str | None = Field(
+        default=None, alias="token_hash", min_length=67, max_length=67
+    )
     status: CardStatus
     is_current: bool
     provisioned_at: UtcDateTime | None = None
@@ -57,10 +59,16 @@ class CardDocument(CardModel):
     def validate_serial(cls, value: str) -> str:
         return normalize_serial(value)
 
-    @field_validator("token_hash")
+    @field_validator("legacy_token_hash")
     @classmethod
-    def validate_hash(cls, value: str | None) -> str | None:
+    def validate_legacy_token_hash(cls, value: str | None) -> str | None:
         return validate_token_hash(value) if value is not None else None
+
+    @property
+    def token_hash(self) -> str | None:
+        """Backward-compatible access to the legacy stored token hash."""
+
+        return self.legacy_token_hash
 
     def __repr__(self) -> str:
         """Keep the internal token hash out of logs and diagnostic reprs."""
@@ -94,7 +102,7 @@ class CardDocument(CardModel):
             self.owner_id is None or self.is_current
         ):
             raise ValueError("lost and replaced cards must have an owner and be non-current")
-        if self.token_hash is None:
+        if self.legacy_token_hash is None:
             if self.provisioned_at is not None:
                 raise ValueError("unprovisioned cards cannot have provisioning metadata")
             if self.encoding_verified_at is not None or self.encoded_by_admin_id is not None:
