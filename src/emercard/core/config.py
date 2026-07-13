@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     mongodb_custody_events_collection: str = "card_custody_events"
     mongodb_idempotency_collection: str = "idempotency_keys"
     mongodb_public_access_links_collection: str = "public_access_links"
+    mongodb_card_link_assignments_collection: str = "card_link_assignments"
     mongodb_test_database_prefix: str = "emercard_test"
     mongodb_index_initialization_mode: IndexInitializationMode = "disabled"
 
@@ -104,6 +105,7 @@ class Settings(BaseSettings):
         "mongodb_custody_events_collection",
         "mongodb_idempotency_collection",
         "mongodb_public_access_links_collection",
+        "mongodb_card_link_assignments_collection",
         "mongodb_test_database_prefix",
         "auth_cookie_name",
     )

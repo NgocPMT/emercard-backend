@@ -4,6 +4,11 @@ import pytest
 
 from emercard.core.config import Settings
 from emercard.db.indexes import (
+    CARD_LINK_ASSIGNMENTS_ACTIVE_CARD_INDEX,
+    CARD_LINK_ASSIGNMENTS_ACTIVE_LINK_INDEX,
+    CARD_LINK_ASSIGNMENTS_CARD_INDEX,
+    CARD_LINK_ASSIGNMENTS_LINK_INDEX,
+    CARD_LINK_ASSIGNMENTS_STATUS_INDEX,
     CARDS_ENCODING_INDEX,
     CARDS_OWNER_CURRENT_INDEX,
     CARDS_OWNER_INDEX,
@@ -19,6 +24,10 @@ from emercard.db.indexes import (
     IDEMPOTENCY_KEY_INDEX,
     PROFILES_PUBLIC_TOKEN_INDEX,
     PROFILES_USER_INDEX,
+    PUBLIC_ACCESS_LINKS_PROFILE_INDEX,
+    PUBLIC_ACCESS_LINKS_PROFILE_PURPOSE_INDEX,
+    PUBLIC_ACCESS_LINKS_STATUS_INDEX,
+    PUBLIC_ACCESS_LINKS_TOKEN_HASH_INDEX,
     USERS_EMAIL_INDEX,
     initialize_indexes,
 )
@@ -34,6 +43,23 @@ class FakeDatabase:
         self.collections = {
             "users": FakeCollection([USERS_EMAIL_INDEX]),
             "medical_profiles": FakeCollection([PROFILES_USER_INDEX, PROFILES_PUBLIC_TOKEN_INDEX]),
+            "public_access_links": FakeCollection(
+                [
+                    PUBLIC_ACCESS_LINKS_PROFILE_INDEX,
+                    PUBLIC_ACCESS_LINKS_PROFILE_PURPOSE_INDEX,
+                    PUBLIC_ACCESS_LINKS_TOKEN_HASH_INDEX,
+                    PUBLIC_ACCESS_LINKS_STATUS_INDEX,
+                ]
+            ),
+            "card_link_assignments": FakeCollection(
+                [
+                    CARD_LINK_ASSIGNMENTS_CARD_INDEX,
+                    CARD_LINK_ASSIGNMENTS_LINK_INDEX,
+                    CARD_LINK_ASSIGNMENTS_STATUS_INDEX,
+                    CARD_LINK_ASSIGNMENTS_ACTIVE_CARD_INDEX,
+                    CARD_LINK_ASSIGNMENTS_ACTIVE_LINK_INDEX,
+                ]
+            ),
             "cards": FakeCollection(
                 [
                     CARDS_SERIAL_INDEX,
@@ -68,6 +94,19 @@ async def test_initialize_indexes_is_explicit_and_uses_required_collections() ->
     assert result == {
         "users": [USERS_EMAIL_INDEX],
         "medical_profiles": [PROFILES_USER_INDEX, PROFILES_PUBLIC_TOKEN_INDEX],
+        "public_access_links": [
+            PUBLIC_ACCESS_LINKS_PROFILE_INDEX,
+            PUBLIC_ACCESS_LINKS_PROFILE_PURPOSE_INDEX,
+            PUBLIC_ACCESS_LINKS_TOKEN_HASH_INDEX,
+            PUBLIC_ACCESS_LINKS_STATUS_INDEX,
+        ],
+        "card_link_assignments": [
+            CARD_LINK_ASSIGNMENTS_CARD_INDEX,
+            CARD_LINK_ASSIGNMENTS_LINK_INDEX,
+            CARD_LINK_ASSIGNMENTS_STATUS_INDEX,
+            CARD_LINK_ASSIGNMENTS_ACTIVE_CARD_INDEX,
+            CARD_LINK_ASSIGNMENTS_ACTIVE_LINK_INDEX,
+        ],
         "cards": [
             CARDS_SERIAL_INDEX,
             CARDS_TOKEN_HASH_INDEX,
@@ -85,11 +124,17 @@ async def test_initialize_indexes_is_explicit_and_uses_required_collections() ->
     }
     database.collections["users"].create_indexes.assert_awaited_once()
     database.collections["medical_profiles"].create_indexes.assert_awaited_once()
+    database.collections["card_link_assignments"].create_indexes.assert_awaited_once()
 
     profile_indexes = database.collections["medical_profiles"].create_indexes.await_args.args[0]
     assert profile_indexes[1].document["partialFilterExpression"] == {
         "public_access.token": {"$type": "string"}
     }
+    assignment_indexes = database.collections[
+        "card_link_assignments"
+    ].create_indexes.await_args.args[0]
+    assert assignment_indexes[3].document["partialFilterExpression"] == {"status": "active"}
+    assert assignment_indexes[4].document["partialFilterExpression"] == {"status": "active"}
     card_indexes = database.collections["cards"].create_indexes.await_args.args[0]
     token_index = next(
         index for index in card_indexes if index.document["name"] == CARDS_TOKEN_HASH_INDEX

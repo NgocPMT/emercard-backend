@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 
 from emercard.api.auth_routes import get_current_user
+from emercard.modules.card_link_assignments import CardLinkAssignmentRepository
 from emercard.modules.cards import (
     CardRepository,
     CardService,
@@ -13,6 +14,7 @@ from emercard.modules.cards import (
     to_user_card,
 )
 from emercard.modules.profiles.repository import ProfileRepository
+from emercard.modules.public_links import PublicAccessLinkRepository
 from emercard.modules.users import CurrentUserOutput, UserRepository
 
 
@@ -83,8 +85,28 @@ async def get_user_card_service(request: Request) -> CardService:
             request.app.state.settings,
         )
 
+    public_access_link_repository: Any = getattr(
+        request.app.state, "public_access_link_repository", None
+    )
+    if public_access_link_repository is None:
+        public_access_link_repository = PublicAccessLinkRepository(
+            request.app.state.database.database,
+            request.app.state.settings,
+        )
+
+    card_link_assignment_repository: Any = getattr(
+        request.app.state, "card_link_assignment_repository", None
+    )
+    if card_link_assignment_repository is None:
+        card_link_assignment_repository = CardLinkAssignmentRepository(
+            request.app.state.database.database,
+            request.app.state.settings,
+        )
+
     return CardService(
         card_repository,
         user_repository,
         profile_repository=profile_repository,
+        public_access_link_repository=public_access_link_repository,
+        card_link_assignment_repository=card_link_assignment_repository,
     )

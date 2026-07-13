@@ -54,6 +54,7 @@ def create_app(
     custody_event_repository: Any | None = None,
     emergency_rate_limiter: Any | None = None,
     public_access_link_repository: Any | None = None,
+    card_link_assignment_repository: Any | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     logging.getLogger("emercard.request").setLevel(app_settings.log_level)
@@ -85,6 +86,8 @@ def create_app(
         app.state.emergency_rate_limiter = emergency_rate_limiter
     if public_access_link_repository is not None:
         app.state.public_access_link_repository = public_access_link_repository
+    if card_link_assignment_repository is not None:
+        app.state.card_link_assignment_repository = card_link_assignment_repository
 
     app.add_middleware(
         CORSMiddleware,

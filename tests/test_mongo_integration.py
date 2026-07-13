@@ -21,6 +21,8 @@ from emercard.db.indexes import (
     CARDS_TOKEN_HASH_INDEX,
     PROFILES_PUBLIC_TOKEN_INDEX,
     PUBLIC_ACCESS_LINKS_PROFILE_INDEX,
+    PUBLIC_ACCESS_LINKS_PROFILE_PURPOSE_INDEX,
+    PUBLIC_ACCESS_LINKS_STATUS_INDEX,
     PUBLIC_ACCESS_LINKS_TOKEN_HASH_INDEX,
 )
 from emercard.db.repositories import RepositoryConflictError
@@ -655,6 +657,8 @@ async def test_real_mongo_public_profile_links_lifecycle_and_index(mongo_context
 
     index_info = await database[settings.mongodb_public_access_links_collection].index_information()
     assert PUBLIC_ACCESS_LINKS_PROFILE_INDEX in index_info
+    assert PUBLIC_ACCESS_LINKS_PROFILE_PURPOSE_INDEX in index_info
+    assert PUBLIC_ACCESS_LINKS_STATUS_INDEX in index_info
     assert PUBLIC_ACCESS_LINKS_TOKEN_HASH_INDEX in index_info
 
 

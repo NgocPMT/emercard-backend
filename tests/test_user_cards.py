@@ -11,6 +11,10 @@ from emercard.core.config import Settings
 from emercard.db.repositories import InvalidIdentifierError, RepositoryError
 from emercard.main import create_app
 from emercard.modules.auth.security import hash_password
+from emercard.modules.card_link_assignments import (
+    CardLinkAssignmentDocument,
+    CardLinkAssignmentStatus,
+)
 from emercard.modules.cards import (
     CardDocument,
     CardEncodingNotVerifiedError,
@@ -27,6 +31,11 @@ from emercard.modules.cards import (
     hash_public_token,
 )
 from emercard.modules.profiles.models import ProfileDocument
+from emercard.modules.public_links import (
+    PublicAccessLinkDocument,
+    PublicAccessLinkStatus,
+    PublicLinkPurpose,
+)
 from emercard.modules.users.models import UserDocument
 from tests.conftest import FakeDatabase
 
@@ -144,6 +153,356 @@ class CardRepository:
             }
         )
         self.cards[updated.id] = updated
+        return updated
+
+    async def transition_status(
+        self,
+        *,
+        card_id: ObjectId | str,
+        from_statuses: set[CardStatus],
+        to_status: CardStatus,
+        owner_id: ObjectId | str | None = None,
+        now: datetime | None = None,
+        session: object | None = None,
+    ) -> CardDocument | None:
+        del session
+        card = await self.find_by_id(card_id)
+        if card is None or card.status not in from_statuses:
+            return None
+        if owner_id is not None and card.owner_id != ObjectId(owner_id):
+            return None
+        timestamp = now or NOW
+        update = {"status": to_status, "updated_at": timestamp}
+        if to_status is CardStatus.ACTIVE:
+            update["activated_at"] = timestamp
+            update["disabled_at"] = None
+        elif to_status is CardStatus.DISABLED:
+            update["disabled_at"] = timestamp
+        elif to_status is CardStatus.LOST:
+            update["lost_at"] = timestamp
+            update["is_current"] = False
+        elif to_status is CardStatus.REPLACED:
+            update["replaced_at"] = timestamp
+            update["is_current"] = False
+        updated = card.model_copy(update=update)
+        self.cards[updated.id] = updated
+        return updated
+
+    async def create_unassigned_card(
+        self,
+        *,
+        serial: str,
+        token_hash: str | None,
+        replaces_card_id: ObjectId | str | None = None,
+        now: datetime | None = None,
+        session: object | None = None,
+    ) -> CardDocument:
+        del session
+        timestamp = now or NOW
+        card = CardDocument.model_validate(
+            {
+                "_id": ObjectId(),
+                "serial": serial,
+                "owner_id": None,
+                "token_hash": token_hash,
+                "token_revision": 1 if token_hash is not None else 0,
+                "provisioned_at": timestamp if token_hash is not None else None,
+                "replaces_card_id": replaces_card_id,
+                "status": CardStatus.UNASSIGNED,
+                "is_current": False,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            }
+        )
+        self.cards[card.id] = card
+        return card
+
+    async def assign_to_user(
+        self,
+        *,
+        card_id: ObjectId | str,
+        user_id: ObjectId | str,
+        now: datetime | None = None,
+        session: object | None = None,
+    ) -> CardDocument | None:
+        del session
+        card = await self.find_by_id(card_id)
+        if card is None or card.status is not CardStatus.UNASSIGNED or card.owner_id is not None:
+            return None
+        timestamp = now or NOW
+        updated = card.model_copy(
+            update={
+                "owner_id": ObjectId(user_id),
+                "status": CardStatus.ASSIGNED,
+                "is_current": True,
+                "assigned_at": timestamp,
+                "updated_at": timestamp,
+            }
+        )
+        self.cards[updated.id] = updated
+        return updated
+
+    async def issue(
+        self,
+        *,
+        card_id: ObjectId | str,
+        admin_id: ObjectId | str,
+        now: datetime | None = None,
+        session: object | None = None,
+    ) -> CardDocument | None:
+        del admin_id, session
+        card = await self.find_by_id(card_id)
+        if card is None or card.status is not CardStatus.ASSIGNED or card.issued_at is not None:
+            return None
+        timestamp = now or NOW
+        updated = card.model_copy(update={"issued_at": timestamp, "updated_at": timestamp})
+        self.cards[updated.id] = updated
+        return updated
+
+    async def void_before_issue(
+        self,
+        *,
+        card_id: ObjectId | str,
+        now: datetime | None = None,
+        session: object | None = None,
+    ) -> CardDocument | None:
+        del session
+        card = await self.find_by_id(card_id)
+        if card is None or card.status not in {CardStatus.UNASSIGNED, CardStatus.ASSIGNED}:
+            return None
+        timestamp = now or NOW
+        updated = card.model_copy(
+            update={
+                "status": CardStatus.VOID,
+                "is_current": False,
+                "assigned_at": None,
+                "updated_at": timestamp,
+            }
+        )
+        self.cards[updated.id] = updated
+        return updated
+
+    async def mark_replaced(
+        self,
+        *,
+        card_id: ObjectId | str,
+        owner_id: ObjectId | str,
+        now: datetime | None = None,
+        session: object | None = None,
+    ) -> CardDocument | None:
+        del session
+        card = await self.find_by_id(card_id)
+        if card is None or card.owner_id != ObjectId(owner_id):
+            return None
+        return await self.transition_status(
+            card_id=card_id,
+            from_statuses={CardStatus.ASSIGNED, CardStatus.ACTIVE, CardStatus.DISABLED},
+            to_status=CardStatus.REPLACED,
+            owner_id=owner_id,
+            now=now,
+        )
+
+    async def link_replacement(
+        self,
+        *,
+        card_id: ObjectId | str,
+        replacement_card_id: ObjectId | str,
+        now: datetime | None = None,
+        session: object | None = None,
+    ) -> CardDocument | None:
+        del session
+        card = await self.find_by_id(card_id)
+        if card is None or card.status is not CardStatus.REPLACED:
+            return None
+        updated = card.model_copy(
+            update={"replacement_card_id": ObjectId(replacement_card_id), "updated_at": now or NOW}
+        )
+        self.cards[updated.id] = updated
+        return updated
+
+    async def with_transaction(self, operation):
+        return await operation(None)
+
+
+class PublicAccessLinkRepository:
+    def __init__(self, links: list[PublicAccessLinkDocument]) -> None:
+        self.links = {link.id: link for link in links}
+
+    async def find_by_id(
+        self, link_id: ObjectId | str, *, session: object | None = None
+    ) -> PublicAccessLinkDocument | None:
+        del session
+        return self.links.get(ObjectId(link_id))
+
+    async def list_by_profile_id(
+        self,
+        profile_id: ObjectId | str,
+        *,
+        purpose: PublicLinkPurpose | None = None,
+        session: object | None = None,
+    ) -> list[PublicAccessLinkDocument]:
+        del session
+        links = [link for link in self.links.values() if link.profile_id == ObjectId(profile_id)]
+        if purpose is not None:
+            links = [link for link in links if link.purpose is purpose]
+        return links
+
+    async def activate_link(
+        self,
+        *,
+        link_id: ObjectId | str,
+        now: datetime | None = None,
+        session: object | None = None,
+    ) -> PublicAccessLinkDocument | None:
+        del now, session
+        link = self.links.get(ObjectId(link_id))
+        if link is None or link.status is not PublicAccessLinkStatus.DISABLED:
+            return None
+        updated = link.model_copy(
+            update={"status": PublicAccessLinkStatus.ACTIVE, "disabled_at": None}
+        )
+        self.links[updated.id] = updated
+        return updated
+
+    async def disable_link(
+        self,
+        *,
+        link_id: ObjectId | str,
+        now: datetime | None = None,
+        session: object | None = None,
+    ) -> PublicAccessLinkDocument | None:
+        del session
+        link = self.links.get(ObjectId(link_id))
+        if link is None or link.status is not PublicAccessLinkStatus.ACTIVE:
+            return None
+        updated = link.model_copy(
+            update={"status": PublicAccessLinkStatus.DISABLED, "disabled_at": now or NOW}
+        )
+        self.links[updated.id] = updated
+        return updated
+
+    async def revoke_link(
+        self,
+        *,
+        link_id: ObjectId | str,
+        now: datetime | None = None,
+        session: object | None = None,
+    ) -> PublicAccessLinkDocument | None:
+        del now, session
+        link = self.links.get(ObjectId(link_id))
+        if link is None:
+            return None
+        updated = link.model_copy(update={"status": PublicAccessLinkStatus.REVOKED})
+        self.links[updated.id] = updated
+        return updated
+
+
+class CardLinkAssignmentRepository:
+    def __init__(self, assignments: list[CardLinkAssignmentDocument]) -> None:
+        self.assignments = {assignment.id: assignment for assignment in assignments}
+
+    async def list_by_card_id(
+        self, card_id: ObjectId | str, *, session: object | None = None
+    ) -> list[CardLinkAssignmentDocument]:
+        del session
+        return [
+            assignment
+            for assignment in self.assignments.values()
+            if assignment.card_id == ObjectId(card_id)
+        ]
+
+    async def find_active_by_card_id(
+        self, card_id: ObjectId | str, *, session: object | None = None
+    ) -> CardLinkAssignmentDocument | None:
+        del session
+        for assignment in self.assignments.values():
+            if (
+                assignment.card_id == ObjectId(card_id)
+                and assignment.status is CardLinkAssignmentStatus.ACTIVE
+            ):
+                return assignment
+        return None
+
+    async def find_active_by_public_access_link_id(
+        self, public_access_link_id: ObjectId | str, *, session: object | None = None
+    ) -> CardLinkAssignmentDocument | None:
+        del session
+        for assignment in self.assignments.values():
+            if (
+                assignment.public_access_link_id == ObjectId(public_access_link_id)
+                and assignment.status is CardLinkAssignmentStatus.ACTIVE
+            ):
+                return assignment
+        return None
+
+    async def list_by_public_access_link_id(
+        self, public_access_link_id: ObjectId | str, *, session: object | None = None
+    ) -> list[CardLinkAssignmentDocument]:
+        del session
+        return [
+            assignment
+            for assignment in self.assignments.values()
+            if assignment.public_access_link_id == ObjectId(public_access_link_id)
+        ]
+
+    async def activate_assignment(
+        self,
+        *,
+        assignment_id: ObjectId | str,
+        now: datetime | None = None,
+        session: object | None = None,
+    ) -> CardLinkAssignmentDocument | None:
+        del now, session
+        assignment = self.assignments.get(ObjectId(assignment_id))
+        if assignment is None or assignment.status is not CardLinkAssignmentStatus.DISABLED:
+            return None
+        updated = assignment.model_copy(update={"status": CardLinkAssignmentStatus.ACTIVE})
+        self.assignments[updated.id] = updated
+        return updated
+
+    async def deactivate_assignment(
+        self,
+        *,
+        assignment_id: ObjectId | str,
+        disabled_by_admin_id: ObjectId | str | None = None,
+        now: datetime | None = None,
+        session: object | None = None,
+    ) -> CardLinkAssignmentDocument | None:
+        del disabled_by_admin_id, session
+        assignment = self.assignments.get(ObjectId(assignment_id))
+        if assignment is None or assignment.status is not CardLinkAssignmentStatus.ACTIVE:
+            return None
+        updated = assignment.model_copy(
+            update={"status": CardLinkAssignmentStatus.DISABLED, "disabled_at": now or NOW}
+        )
+        self.assignments[updated.id] = updated
+        return updated
+
+    async def detach_assignment(
+        self,
+        *,
+        assignment_id: ObjectId | str,
+        detached_by_admin_id: ObjectId | str | None = None,
+        detach_reason: str | None = None,
+        now: datetime | None = None,
+        session: object | None = None,
+    ) -> CardLinkAssignmentDocument | None:
+        del session
+        assignment = self.assignments.get(ObjectId(assignment_id))
+        if assignment is None or assignment.status not in {
+            CardLinkAssignmentStatus.ACTIVE,
+            CardLinkAssignmentStatus.DISABLED,
+        }:
+            return None
+        updated = assignment.model_copy(
+            update={
+                "status": CardLinkAssignmentStatus.DETACHED,
+                "detached_at": now or NOW,
+                "detached_by_admin_id": detached_by_admin_id,
+                "detach_reason": detach_reason,
+            }
+        )
+        self.assignments[updated.id] = updated
         return updated
 
 
@@ -368,6 +727,326 @@ async def test_user_card_visibility_filters_and_orders_cards() -> None:
         assert (
             await service.get_user_card(card_id=visible_card.id, user_id=OWNER_ID)
         ).id == visible_card.id
+
+
+@pytest.mark.asyncio
+async def test_user_card_service_uses_link_profile_for_authorization() -> None:
+    linked_profile = profile(ready=True)
+    foreign_owner = ObjectId("507f1f77bcf86cd799439099")
+    linked_card = card(status=CardStatus.ASSIGNED).model_copy(
+        update={
+            "owner_id": foreign_owner,
+            "issued_at": NOW,
+            "status": CardStatus.ASSIGNED,
+            "is_current": True,
+        }
+    )
+    linked_card = linked_card.model_copy(update={"encoding_verified_at": NOW})
+    public_link = PublicAccessLinkDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "profile_id": linked_profile.id,
+            "purpose": PublicLinkPurpose.CARD,
+            "label": "Card access",
+            "token_hash": hash_public_token(generate_public_token()),
+            "status": PublicAccessLinkStatus.ACTIVE,
+            "created_by": ADMIN_ID,
+            "created_at": NOW,
+            "updated_at": NOW,
+            "activated_at": NOW,
+        }
+    )
+    assignment = CardLinkAssignmentDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "card_id": linked_card.id,
+            "public_access_link_id": public_link.id,
+            "status": CardLinkAssignmentStatus.ACTIVE,
+            "attached_at": NOW,
+            "updated_at": NOW,
+            "attached_by_admin_id": ADMIN_ID,
+        }
+    )
+    repository = CardRepository([linked_card])
+    service = CardService(
+        repository,
+        UserRepository(user()),
+        profile_repository=ProfileRepository(linked_profile),
+        public_access_link_repository=PublicAccessLinkRepository([public_link]),
+        card_link_assignment_repository=CardLinkAssignmentRepository([assignment]),
+    )
+
+    visible = await service.list_user_cards(user_id=OWNER_ID)
+    detail = await service.get_user_card(card_id=linked_card.id, user_id=OWNER_ID)
+    activated = await service.activate_user_card(card_id=linked_card.id, user_id=OWNER_ID, now=NOW)
+
+    assert [item.id for item in visible] == [linked_card.id]
+    assert detail.id == linked_card.id
+    assert activated.status is CardStatus.ACTIVE
+    assert repository.cards[linked_card.id].status is CardStatus.ACTIVE
+    assert repository.cards[linked_card.id].owner_id == foreign_owner
+
+
+@pytest.mark.asyncio
+async def test_user_card_service_ignores_disabled_links_for_authorization() -> None:
+    linked_profile = profile(ready=True)
+    linked_card = card(status=CardStatus.ASSIGNED).model_copy(
+        update={"issued_at": NOW, "status": CardStatus.ASSIGNED, "is_current": True}
+    )
+    disabled_link = PublicAccessLinkDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "profile_id": linked_profile.id,
+            "purpose": PublicLinkPurpose.CARD,
+            "label": "Card access",
+            "token_hash": hash_public_token(generate_public_token()),
+            "status": PublicAccessLinkStatus.DISABLED,
+            "created_by": ADMIN_ID,
+            "created_at": NOW,
+            "updated_at": NOW,
+            "disabled_at": NOW,
+        }
+    )
+    assignment = CardLinkAssignmentDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "card_id": linked_card.id,
+            "public_access_link_id": disabled_link.id,
+            "status": CardLinkAssignmentStatus.ACTIVE,
+            "attached_at": NOW,
+            "updated_at": NOW,
+            "attached_by_admin_id": ADMIN_ID,
+        }
+    )
+    service = CardService(
+        CardRepository([linked_card]),
+        UserRepository(user()),
+        profile_repository=ProfileRepository(linked_profile),
+        public_access_link_repository=PublicAccessLinkRepository([disabled_link]),
+        card_link_assignment_repository=CardLinkAssignmentRepository([assignment]),
+    )
+
+    assert await service.list_user_cards(user_id=OWNER_ID) == []
+    with pytest.raises(CardNotFoundError):
+        await service.get_user_card(card_id=linked_card.id, user_id=OWNER_ID)
+
+
+@pytest.mark.asyncio
+async def test_user_card_service_issues_linked_card_and_activates_access_state() -> None:
+    linked_card = card(status=CardStatus.ASSIGNED).model_copy(
+        update={"issued_at": None, "activated_at": None, "status": CardStatus.ASSIGNED}
+    )
+    disabled_link = PublicAccessLinkDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "profile_id": OWNER_ID,
+            "purpose": PublicLinkPurpose.CARD,
+            "label": "Card access",
+            "token_hash": hash_public_token(generate_public_token()),
+            "status": PublicAccessLinkStatus.DISABLED,
+            "created_by": ADMIN_ID,
+            "created_at": NOW,
+            "updated_at": NOW,
+            "disabled_at": NOW,
+        }
+    )
+    disabled_assignment = CardLinkAssignmentDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "card_id": linked_card.id,
+            "public_access_link_id": disabled_link.id,
+            "status": CardLinkAssignmentStatus.DISABLED,
+            "attached_at": NOW,
+            "updated_at": NOW,
+            "attached_by_admin_id": ADMIN_ID,
+            "disabled_at": NOW,
+            "disabled_by_admin_id": ADMIN_ID,
+        }
+    )
+    repository = CardRepository([linked_card])
+    link_repository = PublicAccessLinkRepository([disabled_link])
+    assignment_repository = CardLinkAssignmentRepository([disabled_assignment])
+    service = CardService(
+        repository,
+        UserRepository(user()),
+        public_access_link_repository=link_repository,
+        card_link_assignment_repository=assignment_repository,
+    )
+
+    issued = await service.issue(card_id=linked_card.id, admin_id=ADMIN_ID, now=NOW)
+
+    assert issued.issued_at == NOW
+    assert repository.cards[linked_card.id].issued_at == NOW
+    assert link_repository.links[disabled_link.id].status is PublicAccessLinkStatus.ACTIVE
+    assert (
+        assignment_repository.assignments[disabled_assignment.id].status
+        is CardLinkAssignmentStatus.ACTIVE
+    )
+
+
+@pytest.mark.asyncio
+async def test_user_card_service_marks_lost_and_replaces_card_access_state() -> None:
+    lost_card = card(status=CardStatus.ACTIVE)
+    lost_link = PublicAccessLinkDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "profile_id": OWNER_ID,
+            "purpose": PublicLinkPurpose.CARD,
+            "label": "Card access",
+            "token_hash": hash_public_token(generate_public_token()),
+            "status": PublicAccessLinkStatus.ACTIVE,
+            "created_by": ADMIN_ID,
+            "created_at": NOW,
+            "updated_at": NOW,
+            "activated_at": NOW,
+        }
+    )
+    lost_assignment = CardLinkAssignmentDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "card_id": lost_card.id,
+            "public_access_link_id": lost_link.id,
+            "status": CardLinkAssignmentStatus.ACTIVE,
+            "attached_at": NOW,
+            "updated_at": NOW,
+            "attached_by_admin_id": ADMIN_ID,
+        }
+    )
+    lost_repository = CardRepository([lost_card])
+    lost_link_repository = PublicAccessLinkRepository([lost_link])
+    lost_assignment_repository = CardLinkAssignmentRepository([lost_assignment])
+    lost_service = CardService(
+        lost_repository,
+        UserRepository(user()),
+        public_access_link_repository=lost_link_repository,
+        card_link_assignment_repository=lost_assignment_repository,
+    )
+
+    marked_lost = await lost_service.mark_lost(card_id=lost_card.id, now=NOW)
+
+    assert marked_lost.status is CardStatus.LOST
+    assert lost_repository.cards[lost_card.id].status is CardStatus.LOST
+    assert lost_link_repository.links[lost_link.id].status is PublicAccessLinkStatus.DISABLED
+    assert (
+        lost_assignment_repository.assignments[lost_assignment.id].status
+        is CardLinkAssignmentStatus.DISABLED
+    )
+
+    replacement_card = card(status=CardStatus.ACTIVE)
+    replacement_link = PublicAccessLinkDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "profile_id": OWNER_ID,
+            "purpose": PublicLinkPurpose.CARD,
+            "label": "Replacement card access",
+            "token_hash": hash_public_token(generate_public_token()),
+            "status": PublicAccessLinkStatus.ACTIVE,
+            "created_by": ADMIN_ID,
+            "created_at": NOW,
+            "updated_at": NOW,
+            "activated_at": NOW,
+        }
+    )
+    replacement_assignment = CardLinkAssignmentDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "card_id": replacement_card.id,
+            "public_access_link_id": replacement_link.id,
+            "status": CardLinkAssignmentStatus.ACTIVE,
+            "attached_at": NOW,
+            "updated_at": NOW,
+            "attached_by_admin_id": ADMIN_ID,
+        }
+    )
+    replacement_repository = CardRepository([replacement_card])
+    replacement_link_repository = PublicAccessLinkRepository([replacement_link])
+    replacement_assignment_repository = CardLinkAssignmentRepository([replacement_assignment])
+    replacement_service = CardService(
+        replacement_repository,
+        UserRepository(user()),
+        public_access_link_repository=replacement_link_repository,
+        card_link_assignment_repository=replacement_assignment_repository,
+    )
+
+    replacement = await replacement_service.replace(card_id=replacement_card.id, now=NOW)
+
+    assert replacement.card.status is CardStatus.ASSIGNED
+    assert replacement_repository.cards[replacement_card.id].status is CardStatus.REPLACED
+    assert (
+        replacement_link_repository.links[replacement_link.id].status
+        is PublicAccessLinkStatus.DISABLED
+    )
+    assert (
+        replacement_assignment_repository.assignments[replacement_assignment.id].status
+        is CardLinkAssignmentStatus.DISABLED
+    )
+
+
+@pytest.mark.asyncio
+async def test_user_card_service_restores_and_revokes_link_state_with_card_actions() -> None:
+    linked_profile = profile(ready=True)
+    disabled_card = card(status=CardStatus.DISABLED).model_copy(
+        update={"issued_at": NOW, "encoding_verified_at": NOW, "is_current": True}
+    )
+    disabled_link = PublicAccessLinkDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "profile_id": linked_profile.id,
+            "purpose": PublicLinkPurpose.CARD,
+            "label": "Card access",
+            "token_hash": hash_public_token(generate_public_token()),
+            "status": PublicAccessLinkStatus.DISABLED,
+            "created_by": ADMIN_ID,
+            "created_at": NOW,
+            "updated_at": NOW,
+            "disabled_at": NOW,
+        }
+    )
+    disabled_assignment = CardLinkAssignmentDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "card_id": disabled_card.id,
+            "public_access_link_id": disabled_link.id,
+            "status": CardLinkAssignmentStatus.DISABLED,
+            "attached_at": NOW,
+            "updated_at": NOW,
+            "attached_by_admin_id": ADMIN_ID,
+            "disabled_at": NOW,
+            "disabled_by_admin_id": ADMIN_ID,
+        }
+    )
+    repository = CardRepository([disabled_card])
+    link_repository = PublicAccessLinkRepository([disabled_link])
+    assignment_repository = CardLinkAssignmentRepository([disabled_assignment])
+    service = CardService(
+        repository,
+        UserRepository(user()),
+        profile_repository=ProfileRepository(linked_profile),
+        public_access_link_repository=link_repository,
+        card_link_assignment_repository=assignment_repository,
+    )
+
+    activated = await service.activate_user_card(
+        card_id=disabled_card.id, user_id=OWNER_ID, now=NOW
+    )
+    assert activated.status is CardStatus.ACTIVE
+    assert link_repository.links[disabled_link.id].status is PublicAccessLinkStatus.ACTIVE
+    assert (
+        assignment_repository.assignments[disabled_assignment.id].status
+        is CardLinkAssignmentStatus.ACTIVE
+    )
+
+    disabled = await service.disable_user_card(
+        card_id=disabled_card.id, user_id=OWNER_ID, now=NOW
+    )
+
+    assert repository.cards[disabled_card.id].status is CardStatus.DISABLED
+    assert link_repository.links[disabled_link.id].status is PublicAccessLinkStatus.DISABLED
+    assert (
+        assignment_repository.assignments[disabled_assignment.id].status
+        is CardLinkAssignmentStatus.DISABLED
+    )
+    assert disabled.status is CardStatus.DISABLED
 
 
 def test_user_card_routes_are_authenticated_and_safe() -> None:

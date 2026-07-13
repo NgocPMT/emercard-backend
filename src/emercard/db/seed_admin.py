@@ -4,6 +4,8 @@ import asyncio
 import json
 from dataclasses import dataclass
 
+from pydantic import ValidationError
+
 from emercard.core.config import Settings, get_settings
 from emercard.db import Database
 from emercard.db.repositories import RepositoryConflictError
@@ -22,6 +24,15 @@ class AdminSeedResult:
     email: str
 
 
+def _validated_credentials(email: str, password: str) -> UserRegistrationInput:
+    try:
+        return UserRegistrationInput(email=email, password=password)
+    except ValidationError as error:
+        raise AdminSeedError(
+            "EMERCARD_ADMIN_EMAIL and EMERCARD_ADMIN_PASSWORD must be set"
+        ) from error
+
+
 async def seed_admin(
     repository: UserRepository,
     *,
@@ -30,7 +41,7 @@ async def seed_admin(
 ) -> AdminSeedResult:
     """Create an admin without changing an existing account or its password."""
 
-    credentials = UserRegistrationInput(email=email, password=password)
+    credentials = _validated_credentials(email, password)
     existing = await repository.find_by_email(credentials.email)
     if existing is not None:
         if existing.role != "admin":
@@ -55,7 +66,11 @@ def configured_credentials(settings: Settings) -> tuple[str, str]:
 
     if not settings.admin_email or settings.admin_password is None:
         raise AdminSeedError("EMERCARD_ADMIN_EMAIL and EMERCARD_ADMIN_PASSWORD must be set")
-    return settings.admin_email, settings.admin_password.get_secret_value()
+    credentials = _validated_credentials(
+        settings.admin_email,
+        settings.admin_password.get_secret_value(),
+    )
+    return credentials.email, credentials.password
 
 
 async def run() -> AdminSeedResult:

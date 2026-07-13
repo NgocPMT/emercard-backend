@@ -1,5 +1,10 @@
 """Medical profile domain models and persistence operations."""
 
+from emercard.modules.profiles.exceptions import (
+    ProfileError,
+    ProfileProvisioningInconsistentError,
+    ProfileServiceUnavailableError,
+)
 from emercard.modules.profiles.models import (
     AuthenticatedProfileOutput,
     BloodType,
@@ -48,6 +53,9 @@ __all__ = [
     "to_authenticated_profile",
     "to_profile_view",
     "to_public_profile",
+    "ProfileError",
+    "ProfileProvisioningInconsistentError",
     "ProfileRepository",
     "ProfileService",
+    "ProfileServiceUnavailableError",
 ]

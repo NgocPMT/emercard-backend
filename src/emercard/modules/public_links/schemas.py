@@ -11,3 +11,11 @@ class PublicProfileResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     profile: PublicProfileOutput
+
+
+class PublicProfilePreviewLinkResponse(BaseModel):
+    """Envelope for an authenticated preview URL."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    public_url: str

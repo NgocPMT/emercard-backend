@@ -19,8 +19,10 @@ from emercard.modules.profiles.models import (
 )
 from emercard.modules.public_links.errors import (
     PublicProfileDisabledError,
+    PublicProfileExpiredError,
     PublicProfileNotFoundError,
     PublicProfileNotReadyError,
+    PublicProfileRevokedError,
     PublicProfileServiceUnavailableError,
 )
 from emercard.modules.public_links.models import (
@@ -70,6 +72,12 @@ class PublicProfileLookupService:
             raise PublicProfileNotFoundError
         if link.status is PublicAccessLinkStatus.DISABLED:
             raise PublicProfileDisabledError
+        if link.status is PublicAccessLinkStatus.REVOKED:
+            raise PublicProfileRevokedError
+        if link.status is PublicAccessLinkStatus.EXPIRED:
+            raise PublicProfileExpiredError
+        if link.status is PublicAccessLinkStatus.PENDING:
+            raise PublicProfileNotReadyError
 
         try:
             profile = await self._profile_repository.find_by_id(link.profile_id)

@@ -3,8 +3,10 @@
 from emercard.modules.public_links.errors import (
     PublicProfileDisabledError,
     PublicProfileError,
+    PublicProfileExpiredError,
     PublicProfileNotFoundError,
     PublicProfileNotReadyError,
+    PublicProfileRevokedError,
     PublicProfileServiceUnavailableError,
 )
 from emercard.modules.public_links.lookup import (
@@ -15,10 +17,14 @@ from emercard.modules.public_links.lookup import (
 from emercard.modules.public_links.models import (
     PublicAccessLinkDocument,
     PublicAccessLinkStatus,
+    PublicLinkPurpose,
     PublicProfileLinkResult,
 )
 from emercard.modules.public_links.repository import PublicAccessLinkRepository
-from emercard.modules.public_links.schemas import PublicProfileResponse
+from emercard.modules.public_links.schemas import (
+    PublicProfilePreviewLinkResponse,
+    PublicProfileResponse,
+)
 from emercard.modules.public_links.service import PublicProfileLinkService
 
 __all__ = [
@@ -26,14 +32,18 @@ __all__ = [
     "PublicAccessLinkRepository",
     "PublicAccessLinkRepositoryProtocol",
     "PublicAccessLinkStatus",
+    "PublicLinkPurpose",
     "PublicProfileDisabledError",
     "PublicProfileError",
+    "PublicProfileExpiredError",
     "PublicProfileLinkResult",
     "PublicProfileLinkService",
     "PublicProfileLookupService",
     "PublicProfileNotFoundError",
     "PublicProfileNotReadyError",
+    "PublicProfilePreviewLinkResponse",
     "PublicProfileResponse",
+    "PublicProfileRevokedError",
     "PublicProfileServiceUnavailableError",
     "ProfileRepositoryProtocol",
 ]

@@ -91,3 +91,14 @@ def test_configured_credentials_require_both_environment_values() -> None:
         admin_password=SecretStr("password-123"),
     )
     assert configured_credentials(settings) == ("admin@example.com", "password-123")
+
+
+def test_configured_credentials_reject_invalid_environment_values() -> None:
+    settings = Settings(
+        environment="test",
+        admin_email="not-an-email",
+        admin_password=SecretStr("short"),
+    )
+
+    with pytest.raises(AdminSeedError, match="EMERCARD_ADMIN_EMAIL"):
+        configured_credentials(settings)

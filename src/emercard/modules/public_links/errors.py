@@ -21,6 +21,22 @@ class PublicProfileDisabledError(PublicProfileError):
     message = "Liên kết hồ sơ công khai này đã bị vô hiệu hóa."
 
 
+class PublicProfileRevokedError(PublicProfileError):
+    """The token resolved to a revoked public profile link."""
+
+    status_code = 410
+    code = "public_profile.revoked"
+    message = "Liên kết hồ sơ công khai này đã bị thu hồi."
+
+
+class PublicProfileExpiredError(PublicProfileError):
+    """The token resolved to an expired public profile link."""
+
+    status_code = 410
+    code = "public_profile.expired"
+    message = "Liên kết hồ sơ công khai này đã hết hạn."
+
+
 class PublicProfileNotReadyError(PublicProfileError):
     """The linked profile is missing or incomplete for public display."""
 

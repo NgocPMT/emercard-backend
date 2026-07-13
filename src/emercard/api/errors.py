@@ -27,7 +27,12 @@ from emercard.modules.cards.errors import (
 )
 from emercard.modules.emergency.errors import EmergencyLookupError
 from emercard.modules.profiles.exceptions import ProfileError
-from emercard.modules.public_links.errors import PublicProfileError
+from emercard.modules.public_links.errors import (
+    PublicProfileDisabledError,
+    PublicProfileError,
+    PublicProfileExpiredError,
+    PublicProfileRevokedError,
+)
 
 
 def _request_id(request: Request) -> str:
@@ -75,9 +80,27 @@ def emergency_exception_handler(request: Request, exc: EmergencyLookupError) -> 
 
 
 def public_profile_exception_handler(request: Request, exc: PublicProfileError) -> JSONResponse:
+    mapping: dict[type[PublicProfileError], tuple[int, str, str]] = {
+        PublicProfileDisabledError: (
+            410,
+            "public_profile.disabled",
+            "Liên kết hồ sơ công khai này đã bị vô hiệu hóa.",
+        ),
+        PublicProfileRevokedError: (
+            410,
+            "public_profile.revoked",
+            "Liên kết hồ sơ công khai này đã bị thu hồi.",
+        ),
+        PublicProfileExpiredError: (
+            410,
+            "public_profile.expired",
+            "Liên kết hồ sơ công khai này đã hết hạn.",
+        ),
+    }
+    status_code, code, message = mapping.get(type(exc), (exc.status_code, exc.code, exc.message))
     return JSONResponse(
-        status_code=exc.status_code,
-        content=error_payload(request, code=exc.code, message=exc.message),
+        status_code=status_code,
+        content=error_payload(request, code=code, message=message),
     )
 
 

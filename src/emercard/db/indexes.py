@@ -9,8 +9,15 @@ from emercard.core.config import Settings
 USERS_EMAIL_INDEX = "users_email_unique"
 PROFILES_USER_INDEX = "medical_profiles_user_unique"
 PROFILES_PUBLIC_TOKEN_INDEX = "medical_profiles_public_token_unique"
-PUBLIC_ACCESS_LINKS_PROFILE_INDEX = "public_access_links_profile_unique"
+PUBLIC_ACCESS_LINKS_PROFILE_INDEX = "public_access_links_profile"
+PUBLIC_ACCESS_LINKS_PROFILE_PURPOSE_INDEX = "public_access_links_profile_purpose"
 PUBLIC_ACCESS_LINKS_TOKEN_HASH_INDEX = "public_access_links_token_hash_unique"
+PUBLIC_ACCESS_LINKS_STATUS_INDEX = "public_access_links_status"
+CARD_LINK_ASSIGNMENTS_CARD_INDEX = "card_link_assignments_card"
+CARD_LINK_ASSIGNMENTS_LINK_INDEX = "card_link_assignments_link"
+CARD_LINK_ASSIGNMENTS_STATUS_INDEX = "card_link_assignments_status"
+CARD_LINK_ASSIGNMENTS_ACTIVE_CARD_INDEX = "card_link_assignments_active_card_unique"
+CARD_LINK_ASSIGNMENTS_ACTIVE_LINK_INDEX = "card_link_assignments_active_link_unique"
 CARDS_SERIAL_INDEX = "cards_serial_unique"
 CARDS_TOKEN_HASH_INDEX = "cards_token_hash_unique"
 CARDS_TOKEN_REVISION_INDEX = "cards_token_revision"
@@ -51,11 +58,34 @@ def collection_indexes(settings: Settings) -> dict[str, list[IndexModel]]:
             ),
         ],
         settings.mongodb_public_access_links_collection: [
+            IndexModel([("profile_id", ASCENDING)], name=PUBLIC_ACCESS_LINKS_PROFILE_INDEX),
             IndexModel(
-                [("profile_id", ASCENDING)], name=PUBLIC_ACCESS_LINKS_PROFILE_INDEX, unique=True
+                [("profile_id", ASCENDING), ("purpose", ASCENDING)],
+                name=PUBLIC_ACCESS_LINKS_PROFILE_PURPOSE_INDEX,
             ),
             IndexModel(
                 [("token_hash", ASCENDING)], name=PUBLIC_ACCESS_LINKS_TOKEN_HASH_INDEX, unique=True
+            ),
+            IndexModel([("status", ASCENDING)], name=PUBLIC_ACCESS_LINKS_STATUS_INDEX),
+        ],
+        settings.mongodb_card_link_assignments_collection: [
+            IndexModel([("card_id", ASCENDING)], name=CARD_LINK_ASSIGNMENTS_CARD_INDEX),
+            IndexModel(
+                [("public_access_link_id", ASCENDING)],
+                name=CARD_LINK_ASSIGNMENTS_LINK_INDEX,
+            ),
+            IndexModel([("status", ASCENDING)], name=CARD_LINK_ASSIGNMENTS_STATUS_INDEX),
+            IndexModel(
+                [("card_id", ASCENDING)],
+                name=CARD_LINK_ASSIGNMENTS_ACTIVE_CARD_INDEX,
+                unique=True,
+                partialFilterExpression={"status": "active"},
+            ),
+            IndexModel(
+                [("public_access_link_id", ASCENDING)],
+                name=CARD_LINK_ASSIGNMENTS_ACTIVE_LINK_INDEX,
+                unique=True,
+                partialFilterExpression={"status": "active"},
             ),
         ],
         settings.mongodb_cards_collection: [

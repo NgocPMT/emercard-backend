@@ -10,6 +10,7 @@ from bson import ObjectId
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from emercard.api.auth_routes import get_current_user
 from emercard.core.config import Settings
 from emercard.db import public_profile_links as public_profile_links_module
 from emercard.db.repositories import RepositoryConflictError, RepositoryError
@@ -19,6 +20,7 @@ from emercard.modules.profiles import ProfileDocument
 from emercard.modules.public_links import (
     PublicAccessLinkDocument,
     PublicAccessLinkStatus,
+    PublicLinkPurpose,
     PublicProfileDisabledError,
     PublicProfileLinkResult,
     PublicProfileLinkService,
@@ -27,6 +29,7 @@ from emercard.modules.public_links import (
     PublicProfileNotReadyError,
     PublicProfileServiceUnavailableError,
 )
+from emercard.modules.users import CurrentUserOutput
 from tests.conftest import FakeDatabase
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -89,44 +92,240 @@ def incomplete_profile() -> ProfileDocument:
 
 
 def link_document(
-    *, token_hash: str, status: PublicAccessLinkStatus = PublicAccessLinkStatus.ACTIVE
+    *,
+    token_hash: str,
+    status: PublicAccessLinkStatus = PublicAccessLinkStatus.ACTIVE,
+    purpose: PublicLinkPurpose = PublicLinkPurpose.STANDALONE,
+    label: str | None = None,
 ) -> PublicAccessLinkDocument:
     payload: dict[str, Any] = {
         "_id": ObjectId("507f1f77bcf86cd799439013"),
         "profile_id": PROFILE_ID,
+        "purpose": purpose,
+        "label": label,
         "token_hash": token_hash,
         "status": status,
         "created_at": NOW,
         "updated_at": NOW,
+        "activated_at": NOW if status is PublicAccessLinkStatus.ACTIVE else None,
         "disabled_at": None if status is PublicAccessLinkStatus.ACTIVE else NOW,
+        "revoked_at": None,
+        "expires_at": None,
+        "expired_at": None,
     }
     return PublicAccessLinkDocument.model_validate(payload)
 
 
 class InMemoryLinkRepository:
     def __init__(self, link: PublicAccessLinkDocument | None = None) -> None:
+        self.links: list[PublicAccessLinkDocument] = [link] if link is not None else []
         self.link = link
         self.by_token_calls: list[str] = []
         self.by_profile_calls: list[str] = []
-        self.create_calls: list[tuple[str, str]] = []
+        self.by_profile_purpose_calls: list[tuple[str, str]] = []
+        self.find_by_id_calls: list[str] = []
+        self.create_calls: list[tuple[str, str, str]] = []
         self.rotate_calls: list[tuple[str, str]] = []
+        self.activate_calls: list[str] = []
         self.disable_calls: list[str] = []
+        self.revoke_calls: list[str] = []
+
+    def _replace_link(self, updated: PublicAccessLinkDocument) -> PublicAccessLinkDocument:
+        self.link = updated
+        replaced = False
+        for index, existing in enumerate(self.links):
+            if existing.id == updated.id:
+                self.links[index] = updated
+                replaced = True
+                break
+        if not replaced:
+            self.links.append(updated)
+        return updated
+
+    def _match_profile(
+        self, profile_id: ObjectId | str, purpose: PublicLinkPurpose | None = None
+    ) -> list[PublicAccessLinkDocument]:
+        matches = [item for item in self.links if str(item.profile_id) == str(profile_id)]
+        if purpose is not None:
+            matches = [item for item in matches if item.purpose == purpose]
+        return matches
+
+    async def find_by_id(
+        self, link_id: ObjectId | str, *, session: object | None = None
+    ) -> PublicAccessLinkDocument | None:
+        self.find_by_id_calls.append(str(link_id))
+        for link in self.links:
+            if str(link.id) == str(link_id):
+                return link
+        return None
+
+    async def list_by_profile_id(
+        self,
+        profile_id: ObjectId | str,
+        *,
+        purpose: PublicLinkPurpose | None = None,
+        session: object | None = None,
+    ) -> list[PublicAccessLinkDocument]:
+        self.by_profile_calls.append(str(profile_id))
+        if purpose is not None:
+            self.by_profile_purpose_calls.append((str(profile_id), purpose))
+        return sorted(
+            self._match_profile(profile_id, purpose=purpose),
+            key=lambda item: (item.created_at, item.id),
+            reverse=True,
+        )
+
+    async def find_by_profile_id_and_purpose(
+        self,
+        profile_id: ObjectId | str,
+        *,
+        purpose: PublicLinkPurpose,
+        session: object | None = None,
+    ) -> PublicAccessLinkDocument | None:
+        self.by_profile_purpose_calls.append((str(profile_id), purpose))
+        matches = self._match_profile(profile_id, purpose=purpose)
+        return matches[0] if matches else None
 
     async def find_by_token_hash(
         self, token_hash: str, *, session: object | None = None
     ) -> PublicAccessLinkDocument | None:
         self.by_token_calls.append(token_hash)
-        if self.link is not None and self.link.token_hash == token_hash:
-            return self.link
+        for link in self.links:
+            if link.token_hash == token_hash:
+                return link
         return None
 
-    async def find_by_profile_id(
-        self, profile_id: ObjectId | str, *, session: object | None = None
+    async def create_link(
+        self,
+        *,
+        profile_id: ObjectId | str,
+        purpose: PublicLinkPurpose,
+        token_hash: str,
+        label: str | None = None,
+        status: PublicAccessLinkStatus = PublicAccessLinkStatus.ACTIVE,
+        created_by: ObjectId | str | None = None,
+        now: object | None = None,
+        session: object | None = None,
+    ) -> PublicAccessLinkDocument:
+        self.create_calls.append((str(profile_id), purpose, token_hash))
+        created = PublicAccessLinkDocument.model_validate(
+            {
+                "_id": ObjectId(),
+                "profile_id": ObjectId(str(profile_id)),
+                "purpose": purpose,
+                "label": label,
+                "token_hash": token_hash,
+                "status": status,
+                "created_by": created_by,
+                "created_at": now or NOW,
+                "updated_at": now or NOW,
+                "activated_at": now or NOW if status is PublicAccessLinkStatus.ACTIVE else None,
+                "disabled_at": None if status is PublicAccessLinkStatus.ACTIVE else now or NOW,
+                "revoked_at": None,
+                "expires_at": None,
+                "expired_at": None,
+            }
+        )
+        return self._replace_link(created)
+
+    async def rotate_link(
+        self,
+        *,
+        link_id: ObjectId | str,
+        token_hash: str,
+        now: object | None = None,
+        session: object | None = None,
+    ) -> PublicAccessLinkDocument:
+        self.rotate_calls.append((str(link_id), token_hash))
+        existing = await self.find_by_id(link_id)
+        created_at = existing.created_at if existing is not None else (now or NOW)
+        purpose = existing.purpose if existing is not None else PublicLinkPurpose.STANDALONE
+        rotated = PublicAccessLinkDocument.model_validate(
+            {
+                "_id": existing.id if existing is not None else ObjectId(),
+                "profile_id": existing.profile_id if existing is not None else PROFILE_ID,
+                "purpose": purpose,
+                "label": existing.label if existing is not None else None,
+                "token_hash": token_hash,
+                "status": PublicAccessLinkStatus.ACTIVE,
+                "created_by": existing.created_by if existing is not None else None,
+                "created_at": created_at,
+                "updated_at": now or NOW,
+                "activated_at": now or NOW,
+                "disabled_at": None,
+                "revoked_at": None,
+                "expires_at": None,
+                "expired_at": None,
+            }
+        )
+        return self._replace_link(rotated)
+
+    async def activate_link(
+        self,
+        *,
+        link_id: ObjectId | str,
+        now: object | None = None,
+        session: object | None = None,
     ) -> PublicAccessLinkDocument | None:
-        self.by_profile_calls.append(str(profile_id))
-        if self.link is not None and str(self.link.profile_id) == str(profile_id):
-            return self.link
-        return None
+        self.activate_calls.append(str(link_id))
+        existing = await self.find_by_id(link_id)
+        if existing is None:
+            return None
+        activated = PublicAccessLinkDocument.model_validate(
+            {
+                **existing.model_dump(mode="python", by_alias=True),
+                "status": PublicAccessLinkStatus.ACTIVE,
+                "updated_at": now or NOW,
+                "activated_at": now or NOW,
+                "disabled_at": None,
+                "revoked_at": None,
+                "expires_at": None,
+                "expired_at": None,
+            }
+        )
+        return self._replace_link(activated)
+
+    async def disable_link(
+        self,
+        *,
+        link_id: ObjectId | str,
+        now: object | None = None,
+        session: object | None = None,
+    ) -> PublicAccessLinkDocument | None:
+        self.disable_calls.append(str(link_id))
+        existing = await self.find_by_id(link_id)
+        if existing is None:
+            return None
+        disabled = PublicAccessLinkDocument.model_validate(
+            {
+                **existing.model_dump(mode="python", by_alias=True),
+                "status": PublicAccessLinkStatus.DISABLED,
+                "updated_at": now or NOW,
+                "disabled_at": now or NOW,
+            }
+        )
+        return self._replace_link(disabled)
+
+    async def revoke_link(
+        self,
+        *,
+        link_id: ObjectId | str,
+        now: object | None = None,
+        session: object | None = None,
+    ) -> PublicAccessLinkDocument | None:
+        self.revoke_calls.append(str(link_id))
+        existing = await self.find_by_id(link_id)
+        if existing is None:
+            return None
+        revoked = PublicAccessLinkDocument.model_validate(
+            {
+                **existing.model_dump(mode="python", by_alias=True),
+                "status": PublicAccessLinkStatus.REVOKED,
+                "updated_at": now or NOW,
+                "revoked_at": now or NOW,
+            }
+        )
+        return self._replace_link(revoked)
 
     async def create_for_profile(
         self,
@@ -136,19 +335,13 @@ class InMemoryLinkRepository:
         now: object | None = None,
         session: object | None = None,
     ) -> PublicAccessLinkDocument:
-        self.create_calls.append((str(profile_id), token_hash))
-        self.link = PublicAccessLinkDocument.model_validate(
-            {
-                "_id": ObjectId(),
-                "profile_id": ObjectId(str(profile_id)),
-                "token_hash": token_hash,
-                "status": PublicAccessLinkStatus.ACTIVE,
-                "created_at": now or NOW,
-                "updated_at": now or NOW,
-                "disabled_at": None,
-            }
+        return await self.create_link(
+            profile_id=profile_id,
+            purpose=PublicLinkPurpose.STANDALONE,
+            token_hash=token_hash,
+            now=now,
+            session=session,
         )
-        return self.link
 
     async def rotate_for_profile(
         self,
@@ -158,19 +351,16 @@ class InMemoryLinkRepository:
         now: object | None = None,
         session: object | None = None,
     ) -> PublicAccessLinkDocument:
-        self.rotate_calls.append((str(profile_id), token_hash))
-        self.link = PublicAccessLinkDocument.model_validate(
-            {
-                "_id": self.link.id if self.link is not None else ObjectId(),
-                "profile_id": ObjectId(str(profile_id)),
-                "token_hash": token_hash,
-                "status": PublicAccessLinkStatus.ACTIVE,
-                "created_at": self.link.created_at if self.link is not None else (now or NOW),
-                "updated_at": now or NOW,
-                "disabled_at": None,
-            }
+        active = await self.find_by_profile_id_and_purpose(
+            profile_id, purpose=PublicLinkPurpose.STANDALONE, session=session
         )
-        return self.link
+        if active is None:
+            return await self.create_for_profile(
+                profile_id=profile_id, token_hash=token_hash, now=now, session=session
+            )
+        return await self.rotate_link(
+            link_id=active.id, token_hash=token_hash, now=now, session=session
+        )
 
     async def disable_for_profile(
         self,
@@ -179,18 +369,12 @@ class InMemoryLinkRepository:
         now: object | None = None,
         session: object | None = None,
     ) -> PublicAccessLinkDocument | None:
-        self.disable_calls.append(str(profile_id))
-        if self.link is None or str(self.link.profile_id) != str(profile_id):
-            return None
-        self.link = PublicAccessLinkDocument.model_validate(
-            {
-                **self.link.model_dump(mode="python", by_alias=True),
-                "status": PublicAccessLinkStatus.DISABLED,
-                "updated_at": now or NOW,
-                "disabled_at": now or NOW,
-            }
+        active = await self.find_by_profile_id_and_purpose(
+            profile_id, purpose=PublicLinkPurpose.STANDALONE, session=session
         )
-        return self.link
+        if active is None:
+            return None
+        return await self.disable_link(link_id=active.id, now=now, session=session)
 
 
 class InMemoryProfileRepository:
@@ -204,6 +388,14 @@ class InMemoryProfileRepository:
         if self.failure is not None:
             raise self.failure
         if self.profile is not None and str(self.profile.id) == str(profile_id):
+            return self.profile
+        return None
+
+    async def find_by_user_id(self, user_id: ObjectId | str) -> ProfileDocument | None:
+        self.calls.append(str(user_id))
+        if self.failure is not None:
+            raise self.failure
+        if self.profile is not None and str(self.profile.user_id) == str(user_id):
             return self.profile
         return None
 
@@ -231,25 +423,36 @@ class FlakyLifecycleLinkRepository(InMemoryLinkRepository):
         self.create_failures = 1
         self.rotate_failures = 1
 
-    async def create_for_profile(
+    async def create_link(
         self,
         *,
         profile_id: ObjectId | str,
+        purpose: PublicLinkPurpose,
         token_hash: str,
+        label: str | None = None,
+        status: PublicAccessLinkStatus = PublicAccessLinkStatus.ACTIVE,
+        created_by: ObjectId | str | None = None,
         now: object | None = None,
         session: object | None = None,
     ) -> PublicAccessLinkDocument:
         if self.create_failures > 0:
             self.create_failures -= 1
             raise RepositoryConflictError("collision")
-        return await super().create_for_profile(
-            profile_id=profile_id, token_hash=token_hash, now=now, session=session
+        return await super().create_link(
+            profile_id=profile_id,
+            purpose=purpose,
+            token_hash=token_hash,
+            label=label,
+            status=status,
+            created_by=created_by,
+            now=now,
+            session=session,
         )
 
-    async def rotate_for_profile(
+    async def rotate_link(
         self,
         *,
-        profile_id: ObjectId | str,
+        link_id: ObjectId | str,
         token_hash: str,
         now: object | None = None,
         session: object | None = None,
@@ -257,8 +460,8 @@ class FlakyLifecycleLinkRepository(InMemoryLinkRepository):
         if self.rotate_failures > 0:
             self.rotate_failures -= 1
             raise RepositoryConflictError("collision")
-        return await super().rotate_for_profile(
-            profile_id=profile_id, token_hash=token_hash, now=now, session=session
+        return await super().rotate_link(
+            link_id=link_id, token_hash=token_hash, now=now, session=session
         )
 
 
@@ -422,6 +625,54 @@ def test_public_profile_route_returns_safe_503_on_dependency_failure() -> None:
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "public_profile.service_unavailable"
     assert "db secret" not in response.text
+
+
+def test_profile_preview_link_route_returns_public_url() -> None:
+    link_repository = InMemoryLinkRepository(None)
+    profile_repository = InMemoryProfileRepository(ready_profile())
+    app = create_app(
+        settings=settings(),
+        database=FakeDatabase(ready=True),
+        public_access_link_repository=link_repository,
+        profile_repository=profile_repository,
+    )
+    app.dependency_overrides[get_current_user] = lambda: CurrentUserOutput(
+        id=str(OWNER_ID),
+        email="alex@example.test",
+        role="user",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/me/profile/public-preview-link")
+
+    assert response.status_code == 200
+    public_url = response.json()["public_url"]
+    assert public_url.startswith("https://app.example/e/")
+    assert link_repository.create_calls == [
+        (
+            str(PROFILE_ID),
+            PublicLinkPurpose.STANDALONE,
+            hash_public_token(public_url.rsplit("/", 1)[-1]),
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_public_preview_link_route_issues_fresh_urls_each_time() -> None:
+    link_repository = InMemoryLinkRepository(None)
+    profile_repository = InMemoryProfileRepository(ready_profile())
+    service = PublicProfileLinkService(
+        link_repository, profile_repository, public_profile_base_url="https://app.example/e"
+    )
+
+    first = await service.create_preview_link(profile_id=PROFILE_ID)
+    second = await service.create_preview_link(profile_id=PROFILE_ID)
+
+    assert first.public_url is not None and second.public_url is not None
+    assert first.public_url != second.public_url
+    assert len(link_repository.links) == 2
 
 
 @pytest.mark.asyncio
