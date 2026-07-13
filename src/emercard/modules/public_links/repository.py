@@ -33,7 +33,9 @@ class PublicAccessLinkRepository:
         self, link_id: ObjectId | str, *, session: Any | None = None
     ) -> PublicAccessLinkDocument | None:
         identifier = _object_id(link_id)
-        document = await self._collection.find_one({"_id": identifier}, **_session_kwargs(session))
+        document = await self._collection.find_one(
+            _identifier_query("_id", identifier), **_session_kwargs(session)
+        )
         return _link(document)
 
     async def list_by_profile_id(
@@ -44,9 +46,9 @@ class PublicAccessLinkRepository:
         session: Any | None = None,
     ) -> list[PublicAccessLinkDocument]:
         identifier = _object_id(profile_id)
-        query: dict[str, Any] = {"profile_id": identifier}
+        query: dict[str, Any] = _identifier_query("profile_id", identifier)
         if purpose is not None:
-            query["purpose"] = purpose
+            query = {"$and": [query, {"purpose": purpose.value}]}
         cursor = self._collection.find(query, **_session_kwargs(session)).sort(
             [("created_at", DESCENDING), ("_id", DESCENDING)]
         )
@@ -63,9 +65,11 @@ class PublicAccessLinkRepository:
         cursor = (
             self._collection.find(
                 {
-                    "profile_id": identifier,
-                    "purpose": purpose,
-                    "status": PublicAccessLinkStatus.ACTIVE,
+                    "$and": [
+                        _identifier_query("profile_id", identifier),
+                        {"purpose": purpose.value},
+                        {"status": PublicAccessLinkStatus.ACTIVE},
+                    ]
                 },
                 **_session_kwargs(session),
             )
@@ -149,7 +153,7 @@ class PublicAccessLinkRepository:
         for _ in range(_MAX_TOKEN_RETRIES):
             try:
                 document = await self._collection.find_one_and_update(
-                    {"_id": identifier},
+                    _identifier_query("_id", identifier),
                     {
                         "$set": {
                             "token_hash": canonical_hash,
@@ -184,7 +188,7 @@ class PublicAccessLinkRepository:
         timestamp = now or utc_now()
         identifier = _object_id(link_id)
         document = await self._collection.find_one_and_update(
-            {"_id": identifier},
+            _identifier_query("_id", identifier),
             {
                 "$set": {
                     "status": PublicAccessLinkStatus.ACTIVE,
@@ -211,7 +215,7 @@ class PublicAccessLinkRepository:
         timestamp = now or utc_now()
         identifier = _object_id(link_id)
         document = await self._collection.find_one_and_update(
-            {"_id": identifier},
+            _identifier_query("_id", identifier),
             {
                 "$set": {
                     "status": PublicAccessLinkStatus.DISABLED,
@@ -234,7 +238,7 @@ class PublicAccessLinkRepository:
         timestamp = now or utc_now()
         identifier = _object_id(link_id)
         document = await self._collection.find_one_and_update(
-            {"_id": identifier},
+            _identifier_query("_id", identifier),
             {
                 "$set": {
                     "status": PublicAccessLinkStatus.REVOKED,
@@ -257,7 +261,7 @@ class PublicAccessLinkRepository:
         timestamp = now or utc_now()
         identifier = _object_id(link_id)
         document = await self._collection.find_one_and_update(
-            {"_id": identifier},
+            _identifier_query("_id", identifier),
             {
                 "$set": {
                     "status": PublicAccessLinkStatus.EXPIRED,
@@ -339,6 +343,10 @@ def _link(document: Any) -> PublicAccessLinkDocument | None:
 
 def _links(documents: list[Any]) -> list[PublicAccessLinkDocument]:
     return [PublicAccessLinkDocument.model_validate(document) for document in documents]
+
+
+def _identifier_query(field: str, identifier: ObjectId | str) -> dict[str, Any]:
+    return {"$or": [{field: identifier}, {field: str(identifier)}]}
 
 
 def _object_id(value: ObjectId | str) -> ObjectId:

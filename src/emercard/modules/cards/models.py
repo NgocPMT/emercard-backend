@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -69,6 +70,11 @@ class CardDocument(CardModel):
         """Backward-compatible access to the legacy stored token hash."""
 
         return self.legacy_token_hash
+
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False):
+        if update and "token_hash" in update and "legacy_token_hash" not in update:
+            update = {**update, "legacy_token_hash": update["token_hash"]}
+        return super().model_copy(update=update, deep=deep)
 
     def __repr__(self) -> str:
         """Keep the internal token hash out of logs and diagnostic reprs."""
