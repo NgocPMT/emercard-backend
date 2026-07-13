@@ -2,13 +2,29 @@
 
 The current backend targets one Render web service connected to one MongoDB Atlas demo cluster. Provider resources must be created by the project team because account access, free-tier availability, cluster labels, and network policies are external to this repository.
 
-The intended Render build command is `uv sync --locked --no-dev`; the start command is `uv run --no-dev uvicorn emercard.main:app --host 0.0.0.0 --port $PORT`; and the health check path is `/health`. Keep Atlas network access and the final frontend URL restricted to the project's deployment requirements. Record provider-specific service names and URLs in the project handoff rather than committing credentials.
+The intended Render build command is `uv sync --locked --no-dev`; the start command is `uv run --no-dev uvicorn emercard.main:app --host 0.0.0.0 --port $PORT`; and the health check path is `/health`. Keep Atlas network access and the final frontend URL restricted to the project deployment requirements. Record provider-specific service names and URLs in the project handoff rather than committing credentials.
 
 ## Current backend scope
 
-The backend includes the `users`, `medical_profiles`, and `cards` persistence contracts, explicit `user`/`admin` roles, registration-time empty-profile provisioning, typed repositories, cookie-based authentication endpoints, secure card serial/token primitives, independent card lifecycle transitions, and isolated verification.
+The backend currently includes:
 
-The following remain deferred: admin/user card endpoints, anonymous public card lookup, legacy token hashing/migration/removal, QR/NFC operations, inventory, scans, audits, Redis, messaging, encryption, deployment automation changes, and frontend integration. Legacy profile-owned public-link persistence and indexes remain unchanged for compatibility until the card-backed lookup replacement is approved.
+- authentication and profile provisioning
+- independent public links for profiles and cards
+- card-to-link assignments and custody history
+- card provisioning, verification, issuance, loss, replacement, and voiding
+- `/api/v1/public/{token}` as the canonical anonymous lookup
+- `/api/v1/emergency/{token}` as a read-only compatibility adapter over public links
+- operator commands for link generation, legacy normalization, and legacy retirement
+
+## Remaining deployment concerns
+
+The backend still depends on the external deployment boundary for:
+
+- Render service configuration
+- Atlas network allowlisting
+- disposable MongoDB test clusters
+- frontend origin values
+- credentials and secret rotation
 
 ## Atlas checklist
 

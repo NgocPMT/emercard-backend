@@ -1,94 +1,162 @@
 # Phase 1 Database Models and Configuration
 
-This document records the implementation defaults for Plan 02. It is a persistence contract for the later authentication and profile endpoint work; it does not add HTTP endpoints or make the demo suitable for real medical data.
+This document records the current persistence contract for the backend. It covers the link-first card model, the public-link collections, and the compatibility fields that remain until the migration retirement command is run.
 
 ## Collections
 
-These Phase 1 feature collections are used:
+The Phase 1 collections are:
 
 - `users`
 - `medical_profiles`
+- `public_access_links`
+- `card_link_assignments`
 - `cards`
 - `card_custody_events`
 - `idempotency_keys`
-- `public_access_links`
 
-`medical_profiles.user_id` is unique, enforcing one profile per account. The legacy embedded `public_access` field remains for compatibility, but the quick-demo public-profile link now uses the separate `public_access_links` collection. The card persistence and token-ownership contract is documented in [`card-persistence.md`](card-persistence.md).
+`medical_profiles.user_id` is unique, enforcing one profile per account. The legacy embedded `public_access` field remains on the profile document for compatibility, but anonymous lookup now uses `public_access_links`.
 
-## User contract
+## User documents
 
-A user document contains `_id`, canonical `email`, `password_hash`, `created_at`, and `updated_at`.
+A user document contains:
 
-Canonical email is trimmed and fully lowercased. Provider-specific transformations such as removing dots or plus tags are not applied. The database stores only the canonical value and enforces uniqueness with a unique index. Password inputs are separate from persistence models; only a password hash may be persisted, and plaintext or recoverable password material is never returned.
+- `_id`
+- `email`
+- `password_hash`
+- `role`
+- `created_at`
+- `updated_at`
 
-## Medical profile contract
+Emails are canonicalized before persistence and are unique.
 
-A profile contains `_id`, `user_id`, `display_name`, `birth_year`, `gender`, `blood_type`, `critical_allergies`, `important_conditions`, `critical_medications`, `emergency_note`, `emergency_contacts`, `public_access`, `created_at`, and `updated_at`.
+## Medical profile documents
 
-The implementation defaults are:
+A profile contains:
 
-- `birth_year` is stored rather than a stale calculated age.
-- Gender values are `female`, `male`, `non_binary`, and `prefer_not_to_say`.
-- Blood types are `A+`, `A-`, `B+`, `B-`, `AB+`, `AB-`, `O+`, and `O-`.
-- Medical lists may be empty but are always present in persistence documents.
-- A draft can be saved without an emergency contact; publication requires at least one complete contact.
-- Publication is explicit rather than automatic on save.
-- A disabled link retains its token and can be re-enabled after the profile is valid.
-- Regeneration immediately invalidates the old token.
+- `_id`
+- `user_id`
+- profile display and medical fields
+- `public_access`
+- `created_at`
+- `updated_at`
 
-These values are the Plan 02 implementation defaults. Endpoint work should preserve them unless product/design explicitly changes the contract.
+`public_access` is a compatibility field for the legacy preview link. The new operator and HTTP flows use `public_access_links` instead of storing a new raw token on the profile document.
+
+## Public access links
+
+`public_access_links` stores independent public bearer links. A document contains:
+
+- `_id`
+- `profile_id`
+- `purpose` (`card` or `standalone`)
+- `label`
+- `token_hash`
+- `status`
+- `created_by`
+- `created_at`
+- `updated_at`
+- `activated_at`
+- `disabled_at`
+- `revoked_at`
+- `expires_at`
+- `expired_at`
+
+The collection uses:
+
+- a non-unique `profile_id` index
+- a `(profile_id, purpose)` index
+- a unique `token_hash` index
+- a `status` index
+
+## Card link assignments
+
+`card_link_assignments` records the one-to-one relationship between a card and a card-purpose link. A document contains:
+
+- `_id`
+- `card_id`
+- `public_access_link_id`
+- `status` (`active`, `disabled`, `detached`)
+- `attached_at`
+- `updated_at`
+- `attached_by_admin_id`
+- `disabled_at`
+- `disabled_by_admin_id`
+- `detached_at`
+- `detached_by_admin_id`
+- `detach_reason`
+
+Indexes enforce:
+
+- one active assignment per `card_id`
+- one active assignment per `public_access_link_id`
+- historical rows are allowed for auditing
+
+## Card documents
+
+A card document stores physical identity, custody, and compatibility metadata:
+
+- `_id`
+- `serial`
+- `owner_id`
+- `token_hash` in storage, with `CardDocument.legacy_token_hash` / `token_hash` compatibility access in code
+- `status`
+- `is_current`
+- `provisioned_at`
+- `encoding_verified_at`
+- `encoded_by_admin_id`
+- `assigned_at`
+- `activated_at`
+- `disabled_at`
+- `lost_at`
+- `replaced_at`
+- `issued_at`
+- `issued_by_admin_id`
+- `voided_at`
+- `replaces_card_id`
+- `replacement_card_id`
+- `created_at`
+- `updated_at`
+
+`token_revision` is not part of the current model. The code still keeps the legacy token hash path for compatibility, but card access is now governed by public links and assignments.
+
+Card indexes include:
+
+- unique `serial`
+- partial unique `token_hash` for string values
+- `owner_id`
+- `status`
+- `(owner_id, is_current)`
+- `(owner_id, status)`
+- replacement references
+- encoding filtering
+
+## Custody events and idempotency
+
+`card_custody_events` is append-only. It stores:
+
+- `card_id`
+- `event_type`
+- `previous_owner_id`
+- `new_owner_id`
+- `performed_by_admin_id`
+- `reason`
+- `created_at`
+
+`idempotency_keys.operation_key` is unique and stores the blank-card replay boundary.
 
 ## Validation limits
 
-The initial demo limits are centralized in `Settings`:
+The initial demo limits remain centralized in `Settings`. See `configuration.md` for the current values.
 
-| Value | Limit |
-|---|---:|
-| Display name | 120 characters |
-| Emergency note | 500 characters |
-| Medical list item | 120 characters |
-| Items per medical list | 10 |
-| Emergency contacts | 5 |
-| Contact name | 100 characters |
-| Contact relationship | 80 characters |
-| Contact phone | 32 characters |
-| Birth year | 1900 through the current year |
+## Public access and compatibility
 
-Phone values are accepted in conservative international-looking form: digits, spaces, `+`, `-`, parentheses, and dots. No provider-specific normalization is performed.
+- `public_access_links` is the canonical anonymous lookup store.
+- `/api/v1/public/{token}` is the canonical HTTP entrypoint.
+- `/api/v1/emergency/{token}` remains a compatibility adapter over public links.
+- `medical_profiles.public_access` remains only for compatibility until the retirement command is run.
 
-## Public access
+## Index initialization
 
-`public_access` contains `token`, `enabled`, `published_at`, and `regenerated_at`. Tokens are generated from a cryptographically secure random source and are not logged. A profile without a token is unpublished. Only enabled tokens resolve through the legacy repository lookup. Phase 1 stores the raw token temporarily so the authenticated dashboard can display/copy the link; the quick-demo profile-link collection stores only a hash and uses `Settings.public_profile_base_url`.
+Index creation is idempotent. The initialization command never drops or rebuilds data, and incompatible existing index options fail visibly.
 
-The public response is an explicit allowlist of emergency-page fields. It excludes `_id`, `user_id`, password/account data, public token, link metadata, and persistence timestamps.
-
-## Derived profile state
-
-Completeness is not persisted. The shared evaluator returns:
-
-- `incomplete`
-- `ready_to_publish`
-- `published`
-- `published_disabled`
-
-A complete profile requires display name, accepted birth year, approved gender, approved blood type, and at least one complete emergency contact. Medical lists may remain empty under this Phase 1 default.
-
-## Indexes and initialization
-
-Required user/profile indexes are:
-
-- unique `users.email`;
-- unique `medical_profiles.user_id`;
-- unique sparse/partial `medical_profiles.public_access.token`, allowing profiles without a token.
-
-The `cards`, `card_custody_events`, `idempotency_keys`, and `public_access_links` indexes, lifecycle invariants, token-hash contract, and replacement/custody transaction requirements are documented in [`card-persistence.md`](card-persistence.md).
-
-Initialization is idempotent and never drops or rebuilds data. The application may run it on startup only when configured; an explicit command is the deployment-safe default.
-
-## Admin card configuration
-
-`Settings.public_card_base_url` is the exact absolute URL prefix used to construct physical-card links, for example `https://app.emercard.id.vn/e`. It must not contain a query or fragment. `Settings.public_profile_base_url` is the quick-demo public-profile page prefix and must also end with `/e`. `mongodb_custody_events_collection`, `mongodb_idempotency_collection`, and `mongodb_public_access_links_collection` configure the operational collections for custody events, blank-card creation replay, and profile-link persistence.
-
-## Deferred decisions
-
-Authentication transport is prepared for a secure HTTP-only cookie, with final cookie/CORS values dependent on the deployed frontend origin. MongoDB JSON Schema validation is intentionally omitted; Pydantic validation plus indexes are the Phase 1 baseline.
+See [`card-persistence.md`](card-persistence.md) for the lifecycle and business rules, and [`maintenance.md`](maintenance.md) for the operator commands that move or retire legacy data.

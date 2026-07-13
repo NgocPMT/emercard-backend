@@ -1,148 +1,150 @@
-# Card Persistence, Provisioning, and Custody
+# Card Persistence, Link Assignment, and Custody
 
-This document describes the backend card foundation, administrator provisioning boundary, and authenticated user card controls. It does not add a frontend, direct NFC/QR writing, anonymous lookup, token migration, shipping, or a full audit platform.
+This document explains how physical cards, public links, and custody history work in the backend. It covers the implemented link-first model: profiles may own many public links, each physical card uses one distinct card-purpose link, and anonymous lookup only resolves through active public-link records.
 
-## Domain boundary
+## Where this lives
 
-A physical card owns its public-access identity. The medical profile remains user-owned:
+- `src/emercard/modules/cards/models.py`
+- `src/emercard/modules/cards/repository.py`
+- `src/emercard/modules/cards/service.py`
+- `src/emercard/modules/public_links/models.py`
+- `src/emercard/modules/public_links/repository.py`
+- `src/emercard/modules/public_links/service.py`
+- `src/emercard/modules/card_link_assignments/models.py`
+- `src/emercard/modules/card_link_assignments/repository.py`
+- `src/emercard/api/admin_card_routes.py`
+- `src/emercard/api/user_card_routes.py`
+- `src/emercard/api/profile_routes.py`
+- `src/emercard/api/public_profile_routes.py`
+- `src/emercard/api/emergency_routes.py`
+- `src/emercard/db/normalize_legacy_links.py`
+- `src/emercard/db/retire_legacy_access_fields.py`
+
+## Domain model
 
 ```text
 user
   -> one medical profile
+  -> zero or more public links
 
-user
-  -> zero or more cards
-       -> stable serial
-       -> unique token hash when provisioned
-       -> independent lifecycle
+card
+  -> one active assignment to one card-purpose link
+  -> custody history in card_custody_events
+
+standalone public link
+  -> profile-scoped preview / sharing link
 ```
 
-Multiple current and active cards per user are valid. `is_current` does not enforce a preferred card or a one-card limit.
+A card-purpose link is the anonymous access token for one card. A standalone link is separate and is used for profile preview or sharing. The assigned link’s profile is the source of authorization and profile association; `CardDocument.owner_id` remains a custody field, not the anonymous lookup source.
 
-## Card identity and document
+## Card identity
 
-- `serial`: system-generated `EMC-XXXX-XXXX-XXXX-C`, canonical uppercase with checksum.
-- Raw public token: 32 secure random bytes encoded as unpadded Base64URL; never persisted.
-- `token_hash`: `v1$` plus lowercase SHA-256 hex; persisted only after link provisioning.
-- `token_revision`: starts at `0` for a blank card and increments for each provisioning/reprovisioning.
-- `owner_id`: BSON user ID or `null`.
+- `serial` is the stable physical identifier.
+- Raw public tokens are never persisted.
+- The card document still accepts a legacy `token_hash` field for compatibility, but the code exposes it through the `CardDocument.legacy_token_hash` compatibility property.
+- `token_revision` is not part of the current model.
+- Encoding state is derived from `provisioned_at` and `encoding_verified_at`.
 
-Card documents contain:
+### Card lifecycle states
 
-```text
-_id, serial, owner_id, token_hash, token_revision, status, is_current,
-provisioned_at, encoding_verified_at, encoded_by_admin_id,
-assigned_at, activated_at, disabled_at, lost_at, replaced_at,
-issued_at, issued_by_admin_id, voided_at,
-replaces_card_id, replacement_card_id, created_at, updated_at
-```
-
-Encoding state is derived, never stored as a separate enum:
-
-| Condition | State |
+| State | Meaning |
 |---|---|
-| `token_hash == null` | `not_provisioned` |
-| hash exists and `encoding_verified_at == null` | `link_generated` |
-| `encoding_verified_at` exists | `verified` |
+| `unassigned` | Inventory card with no owner |
+| `assigned` | Card is owned but not yet issued |
+| `active` | Card is issued and active |
+| `disabled` | Card is issued but disabled |
+| `lost` | Card is terminal after loss report |
+| `replaced` | Card is terminal after replacement |
+| `void` | Card is retired before issue |
+
+## Link lifecycle
+
+`PublicAccessLink` records have a `purpose` and a status:
+
+- `card` or `standalone`
+- `pending`
+- `active`
+- `disabled`
+- `revoked`
+- `expired`
+
+Card-purpose links begin pending when provisioning is first created. They become active only after the card has been encoded, verified, assigned, and issued. Standalone links may be generated, regenerated, and disabled independently.
 
 ## Admin workflow
 
-1. `POST /api/v1/admin/cards` creates a serial-only blank card. It requires `Idempotency-Key` and returns safe metadata.
-2. `POST /api/v1/admin/cards/{cardId}/provision-link` generates and hashes a token, persists the hash, and returns the raw token/URL exactly once with `Cache-Control: no-store`.
-3. The administrator writes the URL with an NFC/QR tool and reads it back.
-4. `POST /api/v1/admin/cards/{cardId}/confirm-encoding` validates the exact configured base URL and compares the read-back token hash. The raw token is not returned.
-5. A verified card can be assigned to a normal user, reassigned or unassigned before issuance, then issued.
-6. A damaged or unusable never-issued card can be voided. Void cards are terminal and cannot be assigned, issued, or activated.
+1. Create a blank card.
+2. Provision a card-purpose link for that card.
+3. Write the one-time URL to the physical card.
+4. Confirm the read-back URL.
+5. Assign the verified card to a user.
+6. Issue the card.
 
-Pre-verification `POST .../reprovision-link` replaces the hash, increments the revision, returns a new URL once, and invalidates the previous URL. Reprovisioning after verification is forbidden.
+If a card is lost, disabled, detached, or replaced, the backend deactivates the assignment and disables or revokes the associated link.
 
-Assignment never changes the physical link. Assignment does not require profile readiness and does not activate the card. Issuance records handover with `issued_at` and permanently closes direct reassignment, unassignment, and reprovisioning.
-
-## Lifecycle
-
-| Status | Owner | `is_current` | Terminal |
-|---|---:|---:|---:|
-| `unassigned` | none | false | no |
-| `assigned` | required | true | no |
-| `active` | required | true | no |
-| `disabled` | required | true | no |
-| `lost` | required | false | yes |
-| `replaced` | required | false | yes |
-| `void` | none after retirement | false | yes |
-
-Admin custody transitions are guarded by atomic MongoDB predicates. Lost/replaced lifecycle behavior and the existing replacement transaction remain supported.
+Replacement creates a new card-purpose link for the replacement card and never silently reuses the old exposed token.
 
 ## User card controls
 
-Users see only their own cards where `owner_id` matches the authenticated session, `is_current=true`, `issued_at` exists, and status is `assigned`, `active`, or `disabled`. Pre-issuance assigned cards and terminal/non-current cards are hidden from list and detail responses.
+Authenticated users can see only their own issued, current cards. Safe card responses include status and link summaries, not raw tokens or hashes.
 
-The user API is:
+User actions are limited to the selected card:
 
-```text
-GET  /api/v1/me/cards
-GET  /api/v1/me/cards/{cardId}
-POST /api/v1/me/cards/{cardId}/activate
-POST /api/v1/me/cards/{cardId}/disable
-```
+- activate
+- disable
+- report lost
 
-Activation accepts `assigned -> active` and `disabled -> active`. It requires issuance, verified encoding, and the owner's derived profile state `ready_to_publish`. Disablement accepts only `active -> disabled`. Repeated same-direction operations are idempotent and preserve the original `activated_at` or `disabled_at` timestamp. Existing active cards are not automatically disabled when profile editing makes the profile incomplete; a later activation/re-activation checks readiness again.
+## Legacy and compatibility behavior
 
-Each operation uses an atomic single-card conditional update. Status changes never modify sibling cards, so one owner may have multiple active cards. Concurrent same-direction calls converge on the same result; a committed terminal admin transition prevents later user control. The profile read and card write are intentionally not one transaction.
+The backend still keeps compatibility paths for older deployments when link and assignment repositories are unavailable. In that fallback mode, card provisioning and verification use the legacy card token hash path.
 
-User responses are explicit safe projections and exclude raw tokens, token hashes, public URLs, owner/admin identifiers, custody history, replacement internals, and medical-profile content.
+Two operator commands handle the cutover:
 
-## Custody history and idempotency
+- `emercard.db.normalize_legacy_links` copies known legacy hashes into public-link records and creates assignments.
+- `emercard.db.retire_legacy_access_fields` drops obsolete legacy fields and indexes only after validation, backup, and rollback mapping are confirmed.
 
-Administrative ownership operations append events to `card_custody_events`:
+## Persistence and indexes
 
-```text
-card_id, event_type, previous_owner_id, new_owner_id,
-performed_by_admin_id, reason, created_at
-```
+### `cards`
 
-Event types are `assigned`, `reassigned`, `unassigned`, `issued`, and `voided`. Events never contain raw tokens, hashes, URLs, or medical data. Card mutation plus event insertion uses the repository transaction wrapper; transaction verification requires a replica-set MongoDB.
+Card documents store physical identity, custody state, and compatibility metadata. The collection keeps indexes for:
 
-Blank-card creation stores its operation key and resulting card ID in `idempotency_keys`. Repeating the same key returns the original safe card result. Idempotency records currently have no TTL; retention and request-fingerprint policy remain operational follow-up decisions.
+- unique `serial`
+- partial unique `token_hash` for legacy compatibility
+- `owner_id`
+- `status`
+- `(owner_id, is_current)`
+- `(owner_id, status)`
+- replacement references
+- encoding filtering
 
-Custody-event history is persisted for traceability but is not returned by the current safe card-detail response.
+### `public_access_links`
 
-## Indexes
+The public-link collection stores:
 
-The `cards` collection initializes:
+- `profile_id`
+- `purpose`
+- `label`
+- `token_hash`
+- `status`
+- actor/timestamp metadata
 
-- unique `serial`;
-- partial unique `token_hash` for string hashes, allowing multiple blank `null` values;
-- `token_revision`;
-- `owner_id`, `status`, `(owner_id, is_current)`, `(owner_id, status)`;
-- `replaces_card_id`, `replacement_card_id`;
-- `(encoding_verified_at, provisioned_at)` for inventory filtering.
+Indexes include profile/list lookups and a unique `token_hash` index.
 
-`card_custody_events` is indexed by `(card_id, created_at)` and `(previous_owner_id, created_at)`. `idempotency_keys.operation_key` is unique. There is no unique index limiting an owner to one current or active card.
+### `card_link_assignments`
 
-The legacy `medical_profiles.public_access` field and index remain unchanged for compatibility.
+Assignments record the relationship between one card and one card-purpose link. Historical rows remain for auditability. Partial unique indexes enforce one active assignment per card and one active assignment per link.
+
+### `card_custody_events`
+
+Custody events are append-only and record ownership transitions such as assigned, reassigned, unassigned, issued, and voided.
 
 ## Security and output rules
 
-Every admin route requires the existing `require_admin` dependency. Safe card responses may include ID, serial, status, current flag, derived encoding state, revision, safe owner summary, and operational timestamps. They never include raw tokens, token hashes, public URLs, medical data, cookies, authorization headers, or database details.
-
-Provisioning request bodies and generated URLs must not be logged. Generic request logging records only request ID, method, route, status, and duration.
-
-## Deferred consumers
-
-The following remain out of scope: admin frontend, NFC writer integration, QR rendering, anonymous emergency lookup, lost/replacement HTTP workflows, shipping, payments, batches, scan history, full audit UI, and legacy profile-token migration.
+- Raw tokens are returned only in one-time provisioning responses.
+- Logs and safe responses must never expose raw tokens, hashes, cookies, or medical fields.
+- Anonymous lookup response bodies contain only the allowlisted profile projection.
+- Internal scan attribution is preserved through the link/assignment records, but it is not exposed in public responses.
 
 ## Verification
 
-From `emercard-backend/`:
-
-```bash
-uv run ruff check .
-uv run ruff format --check .
-uv run pyright
-uv run pytest
-EMERCARD_TEST_MONGODB_URI=<disposable-replica-set-uri> uv run pytest -m mongo
-uv run python -m emercard.db.initialize
-uv run python -m emercard.db.initialize
-```
-
-The Mongo suite requires a disposable database. Card custody-event transaction coverage requires a replica-set-capable MongoDB.
+See [`verification.md`](verification.md) for the standard command set and MongoDB integration checks.

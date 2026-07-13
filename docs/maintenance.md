@@ -4,11 +4,52 @@ Run these commands from `emercard-backend/` with the virtual environment activat
 
 ## Backfill profiles
 
-Backfill profiles for existing users with the idempotent maintenance command:
+Backfill missing profiles for existing users:
 
 ```bash
 uv run python -m emercard.db.backfill_profiles
 ```
+
+## Manage profile-backed public links
+
+Generate, regenerate, or disable the standalone preview link for a profile:
+
+```bash
+uv run python -m emercard.db.public_profile_links generate --profile-id <profile-id>
+uv run python -m emercard.db.public_profile_links regenerate --profile-id <profile-id>
+uv run python -m emercard.db.public_profile_links disable --profile-id <profile-id>
+```
+
+The command prints safe JSON. It does not print the raw token in error paths.
+
+## Normalize legacy card and profile tokens
+
+Normalize older card and profile token hashes into the link-first collections:
+
+```bash
+uv run python -m emercard.db.normalize_legacy_links
+uv run python -m emercard.db.normalize_legacy_links --apply
+```
+
+- The default mode is dry-run.
+- `--apply` writes public-link and assignment records.
+- Shared legacy hashes cause the command to fail safely instead of silently completing.
+- The command avoids logging raw tokens and hashes.
+
+## Retire obsolete legacy access fields
+
+Retire the old profile-token and card-token fields only after validation, backup, and rollback mapping are confirmed:
+
+```bash
+uv run python -m emercard.db.retire_legacy_access_fields
+uv run python -m emercard.db.retire_legacy_access_fields \
+  --apply \
+  --validated \
+  --backup-confirmed \
+  --rollback-mapped
+```
+
+The command drops the obsolete token indexes and clears the legacy fields only in apply mode. Dry-run mode reports what would be removed.
 
 ## Seed the initial admin
 

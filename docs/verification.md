@@ -18,7 +18,7 @@ Initialize the Phase 1 collections and indexes explicitly against the configured
 uv run python -m emercard.db.initialize
 ```
 
-The initialization command is idempotent and never drops or rebuilds data. Run it twice during local verification. It initializes users, profiles, cards, custody-event, and idempotency indexes. Set `EMERCARD_MONGODB_INDEX_INITIALIZATION_MODE=startup` only when deployment should ensure indexes during application startup; incompatible existing index options must fail visibly.
+The initialization command is idempotent and never drops or rebuilds data. Run it twice during local verification. It initializes users, profiles, public links, card assignments, cards, custody-event, and idempotency indexes. Set `EMERCARD_MONGODB_INDEX_INITIALIZATION_MODE=startup` only when deployment should ensure indexes during application startup; incompatible existing index options must fail visibly.
 
 ## MongoDB integration
 
@@ -28,24 +28,36 @@ For the isolated real-MongoDB repository suite, provide a disposable replica-set
 EMERCARD_TEST_MONGODB_URI=<disposable-replica-set-uri> uv run pytest -m mongo
 ```
 
-Replacement and custody-event transaction coverage requires a replica-set-capable MongoDB. Card-specific invariants, admin gates, safe output rules, and manual NFC/QR verification are documented in [`card-persistence.md`](card-persistence.md).
+Replica-set-capable MongoDB is required for transaction coverage. The current Mongo suite includes coverage for:
 
-Public profile quick-demo verification should additionally confirm:
+- public-link lifecycle and privacy headers
+- card-link assignment conflicts and history
+- emergency/public lookup compatibility
+- legacy migration normalization
+- legacy access-field retirement
+- card replacement rollback behavior
 
-- `uv run python -m emercard.db.public_profile_links generate --profile-id <id>` prints a public URL once and never prints a raw token on failure paths;
-- `uv run python -m emercard.db.public_profile_links regenerate --profile-id <id>` invalidates the old URL;
-- `uv run python -m emercard.db.public_profile_links disable --profile-id <id>` preserves metadata while blocking lookup;
-- `uv run pytest tests/test_public_profile_links.py -q` covers the lifecycle, command, log-redaction, and synchronization regressions.
+## Public link operator checks
 
-Anonymous emergency lookup verification should additionally confirm:
+These commands should also succeed during backend verification:
 
-- active/current/issued/encoding-verified cards resolve through the constrained token-hash query;
-- disabled, lost, replaced, void, non-current, assigned, unknown, malformed, ownerless, and missing-profile cases return the neutral 404;
+```bash
+uv run python -m emercard.db.public_profile_links generate --profile-id <id>
+uv run python -m emercard.db.public_profile_links regenerate --profile-id <id>
+uv run python -m emercard.db.public_profile_links disable --profile-id <id>
+uv run python -m emercard.db.normalize_legacy_links
+uv run python -m emercard.db.retire_legacy_access_fields
+```
+
+The first command group should return safe JSON and never print raw tokens in error paths. The migration commands should support dry-run mode and refuse unsafe completion when legacy hashes are shared or retirement prerequisites are missing.
+
+## Card and lookup checks
+
+- active/current/issued/encoding-verified cards resolve through the constrained card-link/public-link path;
+- disabled, lost, replaced, void, non-current, assigned, unknown, malformed, ownerless, and missing-profile cases return neutral errors;
 - multiple active cards for one owner resolve independently;
-- disablement blocks the unchanged physical URL and reactivation restores it;
-- success and error responses contain the required no-store/noindex privacy headers;
+- disabling a card or link blocks the unchanged URL, and reactivation restores it when allowed;
+- success and error responses contain the required privacy headers;
 - request logs contain only the route template and low-cardinality outcome, never token-bearing paths or hashes.
 
-## Smoke checks
-
-For health and readiness checks, follow [`smoke-checks.md`](smoke-checks.md). `/health` is a process liveness check and remains successful if MongoDB is stopped; `/ready` reports database readiness and returns `503` with a safe error envelope when MongoDB is unavailable. `X-Request-ID` is generated or safely propagated on responses.
+See [`card-persistence.md`](card-persistence.md) for lifecycle gates, assignment rules, custody history, and the public-link/card relationship.
