@@ -20,6 +20,8 @@ from emercard.db.indexes import (
     CARDS_STATUS_INDEX,
     CARDS_TOKEN_HASH_INDEX,
     PROFILES_PUBLIC_TOKEN_INDEX,
+    PUBLIC_ACCESS_LINKS_PROFILE_INDEX,
+    PUBLIC_ACCESS_LINKS_TOKEN_HASH_INDEX,
 )
 from emercard.db.repositories import RepositoryConflictError
 from emercard.modules.cards import (
@@ -38,6 +40,13 @@ from emercard.modules.cards import (
 from emercard.modules.emergency import EmergencyLookupService
 from emercard.modules.emergency.errors import EmergencyProfileNotFoundError
 from emercard.modules.profiles import ProfileRepository, ProfileUpsertInput
+from emercard.modules.public_links import (
+    PublicAccessLinkRepository,
+    PublicProfileDisabledError,
+    PublicProfileLinkService,
+    PublicProfileLookupService,
+    PublicProfileNotFoundError,
+)
 from emercard.modules.users import UserRepository
 
 
@@ -597,6 +606,56 @@ async def test_real_mongo_replacement_rolls_back_when_linking_fails(mongo_contex
     assert stored.status.value == "assigned"
     assert stored.replacement_card_id is None
     assert await database[settings.mongodb_cards_collection].count_documents({}) == 1
+
+
+@pytest.mark.mongo
+@pytest.mark.asyncio
+async def test_real_mongo_public_profile_links_lifecycle_and_index(mongo_context) -> None:
+    database, settings = mongo_context
+    users = UserRepository(database, settings)
+    profiles = ProfileRepository(database, settings)
+    links = PublicAccessLinkRepository(database, settings)
+    owner = await users.create(email="public-link-owner@example.com", password_hash="argon2-hash")
+    profile = await profiles.upsert_for_user(
+        user_id=owner.id,
+        profile=ProfileUpsertInput(
+            display_name="Public Link Owner",
+            birth_year=1995,
+            gender="male",
+            blood_type="O+",
+            critical_allergies=[],
+            important_conditions=[],
+            critical_medications=[],
+            emergency_contacts=[
+                {"name": "Contact", "relationship": "Family", "phone": "0900000000"}
+            ],
+        ),
+    )
+
+    service = PublicProfileLinkService(
+        links, profiles, public_profile_base_url="https://app.example/e"
+    )
+    created = await service.generate(profile_id=profile.id)
+    lookup = PublicProfileLookupService(links, profiles)
+
+    assert created.public_url is not None
+    assert created.raw_token is not None
+    assert await lookup.lookup(created.raw_token) is not None
+
+    regenerated = await service.regenerate(profile_id=profile.id)
+    assert regenerated.public_url is not None
+    assert regenerated.public_url != created.public_url
+    with pytest.raises(PublicProfileNotFoundError):
+        await lookup.lookup(created.raw_token)
+
+    disabled = await service.disable(profile_id=profile.id)
+    assert disabled.status == "disabled"
+    with pytest.raises(PublicProfileDisabledError):
+        await lookup.lookup(regenerated.raw_token)
+
+    index_info = await database[settings.mongodb_public_access_links_collection].index_information()
+    assert PUBLIC_ACCESS_LINKS_PROFILE_INDEX in index_info
+    assert PUBLIC_ACCESS_LINKS_TOKEN_HASH_INDEX in index_info
 
 
 @pytest.mark.mongo

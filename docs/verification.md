@@ -30,6 +30,13 @@ EMERCARD_TEST_MONGODB_URI=<disposable-replica-set-uri> uv run pytest -m mongo
 
 Replacement and custody-event transaction coverage requires a replica-set-capable MongoDB. Card-specific invariants, admin gates, safe output rules, and manual NFC/QR verification are documented in [`card-persistence.md`](card-persistence.md).
 
+Public profile quick-demo verification should additionally confirm:
+
+- `uv run python -m emercard.db.public_profile_links generate --profile-id <id>` prints a public URL once and never prints a raw token on failure paths;
+- `uv run python -m emercard.db.public_profile_links regenerate --profile-id <id>` invalidates the old URL;
+- `uv run python -m emercard.db.public_profile_links disable --profile-id <id>` preserves metadata while blocking lookup;
+- `uv run pytest tests/test_public_profile_links.py -q` covers the lifecycle, command, log-redaction, and synchronization regressions.
+
 Anonymous emergency lookup verification should additionally confirm:
 
 - active/current/issued/encoding-verified cards resolve through the constrained token-hash query;

@@ -28,6 +28,11 @@ class ProfileRepository:
         self._collection = database[settings.mongodb_profiles_collection]
         self._token_bytes = settings.public_link_token_bytes
 
+    async def find_by_id(self, profile_id: ObjectId | str) -> ProfileDocument | None:
+        identifier = _object_id(profile_id)
+        document = await self._collection.find_one({"_id": identifier})
+        return _profile(document)
+
     async def find_by_user_id(self, user_id: ObjectId | str) -> ProfileDocument | None:
         identifier = _object_id(user_id)
         document = await self._collection.find_one({"user_id": identifier})

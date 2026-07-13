@@ -11,8 +11,9 @@ These Phase 1 feature collections are used:
 - `cards`
 - `card_custody_events`
 - `idempotency_keys`
+- `public_access_links`
 
-`medical_profiles.user_id` is unique, enforcing one profile per account. Public-link state remains embedded in the profile for legacy compatibility; there is no separate legacy link collection. The card persistence and token-ownership contract is documented in [`card-persistence.md`](card-persistence.md).
+`medical_profiles.user_id` is unique, enforcing one profile per account. The legacy embedded `public_access` field remains for compatibility, but the quick-demo public-profile link now uses the separate `public_access_links` collection. The card persistence and token-ownership contract is documented in [`card-persistence.md`](card-persistence.md).
 
 ## User contract
 
@@ -57,9 +58,9 @@ Phone values are accepted in conservative international-looking form: digits, sp
 
 ## Public access
 
-`public_access` contains `token`, `enabled`, `published_at`, and `regenerated_at`. Tokens are generated from a cryptographically secure random source and are not logged. A profile without a token is unpublished. Only enabled tokens resolve through the repository lookup. Phase 1 stores the raw token temporarily so the authenticated dashboard can display/copy the link; Phase 2 must migrate to hashed-token lookup.
+`public_access` contains `token`, `enabled`, `published_at`, and `regenerated_at`. Tokens are generated from a cryptographically secure random source and are not logged. A profile without a token is unpublished. Only enabled tokens resolve through the legacy repository lookup. Phase 1 stores the raw token temporarily so the authenticated dashboard can display/copy the link; the quick-demo profile-link collection stores only a hash and uses `Settings.public_profile_base_url`.
 
-The public response is an explicit allowlist of emergency-page fields. It excludes `_id`, `user_id`, password/account data, public token, publication metadata, and persistence timestamps.
+The public response is an explicit allowlist of emergency-page fields. It excludes `_id`, `user_id`, password/account data, public token, link metadata, and persistence timestamps.
 
 ## Derived profile state
 
@@ -80,13 +81,13 @@ Required user/profile indexes are:
 - unique `medical_profiles.user_id`;
 - unique sparse/partial `medical_profiles.public_access.token`, allowing profiles without a token.
 
-The `cards`, `card_custody_events`, and `idempotency_keys` indexes, lifecycle invariants, token-hash contract, and replacement/custody transaction requirements are documented in [`card-persistence.md`](card-persistence.md).
+The `cards`, `card_custody_events`, `idempotency_keys`, and `public_access_links` indexes, lifecycle invariants, token-hash contract, and replacement/custody transaction requirements are documented in [`card-persistence.md`](card-persistence.md).
 
 Initialization is idempotent and never drops or rebuilds data. The application may run it on startup only when configured; an explicit command is the deployment-safe default.
 
 ## Admin card configuration
 
-`Settings.public_card_base_url` is the exact absolute URL prefix used to construct physical-card links, for example `https://app.emercard.id.vn/e`. It must not contain a query or fragment. `mongodb_custody_events_collection` and `mongodb_idempotency_collection` configure the operational collections for custody events and blank-card creation replay.
+`Settings.public_card_base_url` is the exact absolute URL prefix used to construct physical-card links, for example `https://app.emercard.id.vn/e`. It must not contain a query or fragment. `Settings.public_profile_base_url` is the quick-demo public-profile page prefix and must also end with `/e`. `mongodb_custody_events_collection`, `mongodb_idempotency_collection`, and `mongodb_public_access_links_collection` configure the operational collections for custody events, blank-card creation replay, and profile-link persistence.
 
 ## Deferred decisions
 

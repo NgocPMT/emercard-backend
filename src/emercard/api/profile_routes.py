@@ -6,10 +6,10 @@ from fastapi import APIRouter, Depends, Request
 
 from emercard.api.auth_routes import get_current_user
 from emercard.modules.profiles import (
-    AuthenticatedProfileOutput,
     ProfileRepository,
     ProfileService,
     ProfileUpsertInput,
+    ProfileView,
     PublicProfileOutput,
 )
 from emercard.modules.users import CurrentUserOutput
@@ -18,19 +18,19 @@ from emercard.modules.users import CurrentUserOutput
 def build_profile_router() -> APIRouter:
     router = APIRouter(tags=["medical profile"])
 
-    @router.get("/me/profile", response_model=AuthenticatedProfileOutput)
+    @router.get("/me/profile", response_model=ProfileView)
     async def get_profile(  # pyright: ignore[reportUnusedFunction]
         user: CurrentUserOutput = Depends(get_current_user),  # noqa: B008
         service: ProfileService = Depends(get_profile_service),  # noqa: B008
-    ) -> AuthenticatedProfileOutput:  # pyright: ignore[reportUnusedFunction]
+    ) -> ProfileView:  # pyright: ignore[reportUnusedFunction]
         return await service.get_profile(user_id=user.id)
 
-    @router.put("/me/profile", response_model=AuthenticatedProfileOutput)
+    @router.put("/me/profile", response_model=ProfileView)
     async def replace_profile(  # pyright: ignore[reportUnusedFunction]
         payload: ProfileUpsertInput,
         user: CurrentUserOutput = Depends(get_current_user),  # noqa: B008
         service: ProfileService = Depends(get_profile_service),  # noqa: B008
-    ) -> AuthenticatedProfileOutput:  # pyright: ignore[reportUnusedFunction]
+    ) -> ProfileView:  # pyright: ignore[reportUnusedFunction]
         return await service.replace_profile(user_id=user.id, request=payload)
 
     @router.get("/me/profile/public-preview", response_model=PublicProfileOutput)

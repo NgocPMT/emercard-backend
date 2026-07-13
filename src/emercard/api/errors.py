@@ -27,6 +27,7 @@ from emercard.modules.cards.errors import (
 )
 from emercard.modules.emergency.errors import EmergencyLookupError
 from emercard.modules.profiles.exceptions import ProfileError
+from emercard.modules.public_links.errors import PublicProfileError
 
 
 def _request_id(request: Request) -> str:
@@ -67,6 +68,13 @@ def profile_exception_handler(request: Request, exc: ProfileError) -> JSONRespon
 
 
 def emergency_exception_handler(request: Request, exc: EmergencyLookupError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=error_payload(request, code=exc.code, message=exc.message),
+    )
+
+
+def public_profile_exception_handler(request: Request, exc: PublicProfileError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
         content=error_payload(request, code=exc.code, message=exc.message),

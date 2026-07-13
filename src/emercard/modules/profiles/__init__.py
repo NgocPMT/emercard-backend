@@ -1,4 +1,4 @@
-"""Medical-profile domain models and persistence operations."""
+"""Medical profile domain models and persistence operations."""
 
 from emercard.modules.profiles.models import (
     AuthenticatedProfileOutput,
@@ -9,13 +9,18 @@ from emercard.modules.profiles.models import (
     Gender,
     ProfileDashboardOutput,
     ProfileDocument,
+    ProfileReadiness,
+    ProfileReadinessStatus,
     ProfileState,
     ProfileUpsertInput,
+    ProfileView,
     PublicAccessDocument,
     PublicLinkActionInput,
     PublicProfileOutput,
+    profile_readiness,
     profile_state,
     to_authenticated_profile,
+    to_profile_view,
     to_public_profile,
 )
 from emercard.modules.profiles.repository import ProfileRepository
@@ -30,13 +35,18 @@ __all__ = [
     "Gender",
     "ProfileDashboardOutput",
     "ProfileDocument",
+    "ProfileReadiness",
+    "ProfileReadinessStatus",
     "ProfileState",
     "ProfileUpsertInput",
+    "ProfileView",
     "PublicAccessDocument",
     "PublicLinkActionInput",
     "PublicProfileOutput",
+    "profile_readiness",
     "profile_state",
     "to_authenticated_profile",
+    "to_profile_view",
     "to_public_profile",
     "ProfileRepository",
     "ProfileService",

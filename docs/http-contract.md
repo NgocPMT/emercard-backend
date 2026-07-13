@@ -66,6 +66,15 @@ Every route below requires an authenticated administrator:
 
 Safe card responses never include raw tokens, token hashes, public URLs, medical-profile data, cookies, or authentication secrets. Custody history is persisted internally and is not currently included in card detail. Anonymous lookup and replacement HTTP routes remain deferred.
 
+## Public profile links
+
+- `GET /api/v1/public/{token}` is anonymous and returns the profile-backed allowlist for the current active link record.
+- Success returns `200` with `{ "profile": PublicProfileOutput }`; it includes `profile_updated_at` and excludes internal IDs, link metadata, hashes, token material, and private profile state.
+- Invalid or unknown tokens return `404 public_profile.not_found`; disabled links return `410 public_profile.disabled`; linked profiles that are missing or no longer ready return `409 public_profile.not_ready`; backend failures return `503 public_profile.service_unavailable`.
+- All public-profile responses use `Cache-Control: no-store`, `Pragma: no-cache`, `X-Robots-Tag: noindex, nofollow, noarchive`, `Referrer-Policy: no-referrer`, and `X-Content-Type-Options: nosniff`.
+- Request logs use `/api/v1/public/{token}` as the route template and never include token-bearing paths or hashes.
+- The backend operator command `uv run python -m emercard.db.public_profile_links <generate|regenerate|disable> --profile-id <id>` manages the profile link lifecycle.
+
 ## Anonymous emergency lookup
 
 - `GET /api/v1/emergency/{token}` is anonymous and does not require a session or bearer credential.

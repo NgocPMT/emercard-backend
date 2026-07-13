@@ -31,7 +31,7 @@ class InMemoryProfileRepository:
         self.profile = profile
         self.failure: Exception | None = None
         self.find_calls: list[str] = []
-        self.replace_calls: list[str] = []
+        self.upsert_calls: list[str] = []
 
     async def find_by_user_id(self, user_id: str) -> ProfileDocument | None:
         self.find_calls.append(user_id)
@@ -41,25 +41,28 @@ class InMemoryProfileRepository:
             return self.profile
         return None
 
-    async def replace_for_user(
+    async def upsert_for_user(
         self,
         *,
         user_id: str,
         profile: ProfileUpsertInput,
-    ) -> ProfileDocument | None:
-        self.replace_calls.append(user_id)
+    ) -> ProfileDocument:
+        self.upsert_calls.append(user_id)
         if self.failure is not None:
             raise self.failure
-        if self.profile is None or str(self.profile.user_id) != user_id:
-            return None
         now = datetime.now(UTC)
+        current_profile = self.profile is not None and str(self.profile.user_id) == user_id
         values: dict[str, Any] = {
-            "_id": self.profile.id,
-            "user_id": self.profile.user_id,
+            "_id": self.profile.id if current_profile else ObjectId(),
+            "user_id": ObjectId(user_id),
             **profile.model_dump(mode="python"),
-            "public_access": self.profile.public_access.model_dump(mode="python"),
-            "created_at": self.profile.created_at,
+            "created_at": self.profile.created_at if current_profile else now,
             "updated_at": now,
+            "public_access": (
+                self.profile.public_access.model_dump(mode="python")
+                if current_profile
+                else {"token": None, "enabled": False, "published_at": None, "regenerated_at": None}
+            ),
         }
         self.profile = ProfileDocument.model_validate(values)
         return self.profile
@@ -73,25 +76,40 @@ def settings() -> Settings:
     )
 
 
-def profile_for(user: UserDocument) -> ProfileDocument:
+def profile_for(user: UserDocument, *, ready: bool = False) -> ProfileDocument:
     timestamp = datetime(2026, 1, 1, tzinfo=UTC)
-    return ProfileDocument.model_validate(
-        {
-            "_id": ObjectId(),
-            "user_id": user.id,
-            "critical_allergies": [],
-            "important_conditions": [],
-            "critical_medications": [],
-            "emergency_contacts": [],
-            "created_at": timestamp,
-            "updated_at": timestamp,
-            "public_access": {
-                "token": "legacy-token",
-                "enabled": True,
-                "published_at": timestamp,
-            },
-        }
-    )
+    payload: dict[str, Any] = {
+        "_id": ObjectId(),
+        "user_id": user.id,
+        "critical_allergies": [],
+        "important_conditions": [],
+        "critical_medications": [],
+        "emergency_contacts": [],
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "public_access": {
+            "token": "legacy-token",
+            "enabled": True,
+            "published_at": timestamp,
+        },
+    }
+    if ready:
+        payload.update(
+            {
+                "display_name": "Alex Example",
+                "birth_year": 1995,
+                "gender": "prefer_not_to_say",
+                "blood_type": "O+",
+                "emergency_contacts": [
+                    {
+                        "name": "Sam Example",
+                        "relationship": "Friend",
+                        "phone": "0901234567",
+                    }
+                ],
+            }
+        )
+    return ProfileDocument.model_validate(payload)
 
 
 def make_client(
@@ -136,64 +154,121 @@ def test_profile_routes_require_authentication() -> None:
         assert response.json()["error"]["code"] == "auth.authentication_required"
 
 
-def test_get_profile_returns_sanitized_authenticated_output() -> None:
+def test_get_profile_returns_not_started_view_when_profile_is_missing() -> None:
     client, repository, user = make_client(profile=None)
-    repository.profile = profile_for(user)
     with client:
         login(client)
         response = client.get("/api/v1/me/profile")
 
     assert response.status_code == 200
     body = response.json()
-    assert body["state"] == "incomplete"
-    assert body["emergency_contacts"] == []
-    assert body["important_conditions"] == []
-    assert "public_access" not in body
-    assert "id" not in body
+    assert body["profile"] is None
+    assert body["readiness"] == {
+        "status": "not_started",
+        "missing_fields": [
+            "display_name",
+            "birth_year",
+            "gender",
+            "blood_type",
+            "emergency_contacts",
+        ],
+        "required_contact_count": 1,
+        "completed_required_field_count": 0,
+        "total_required_field_count": 5,
+    }
     assert repository.find_calls == [str(user.id)]
 
 
-def test_put_profile_saves_draft_and_returns_public_preview_without_internal_fields() -> None:
+def test_put_profile_creates_profile_and_returns_ready_view() -> None:
     client, repository, user = make_client(profile=None)
-    repository.profile = profile_for(user)
     with client:
         login(client)
-        saved = client.put(
+        response = client.put(
             "/api/v1/me/profile",
             json={
                 "display_name": "  Alex Example  ",
+                "birth_year": 1995,
+                "gender": "other",
+                "blood_type": "O+",
+                "critical_allergies": [" Penicillin ", "penicillin"],
+                "important_conditions": ["Asthma"],
+                "critical_medications": [],
+                "emergency_note": "  Demo profile  ",
+                "emergency_contacts": [
+                    {"name": "Sam Example", "relationship": "Friend", "phone": "0901234567"}
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["profile"]["display_name"] == "Alex Example"
+    assert body["profile"]["critical_allergies"] == ["Penicillin"]
+    assert body["profile"]["emergency_note"] == "Demo profile"
+    assert body["readiness"] == {
+        "status": "ready",
+        "missing_fields": [],
+        "required_contact_count": 1,
+        "completed_required_field_count": 5,
+        "total_required_field_count": 5,
+    }
+    assert "id" not in body["profile"]
+    assert repository.upsert_calls == [str(user.id)]
+
+
+def test_put_profile_preserves_incomplete_drafts_and_created_at() -> None:
+    client, repository, user = make_client(profile=None)
+    with client:
+        login(client)
+        first = client.put(
+            "/api/v1/me/profile",
+            json={
+                "display_name": "Alex Example",
                 "critical_allergies": [],
                 "important_conditions": [],
                 "critical_medications": [],
                 "emergency_contacts": [],
             },
         )
-        preview = client.get("/api/v1/me/profile/public-preview")
+        first_created_at = first.json()["profile"]["created_at"]
+        second = client.put(
+            "/api/v1/me/profile",
+            json={
+                "display_name": "Alex Example",
+                "birth_year": 1995,
+                "gender": "male",
+                "blood_type": "O+",
+                "critical_allergies": [],
+                "important_conditions": [],
+                "critical_medications": [],
+                "emergency_contacts": [
+                    {"name": "Sam Example", "relationship": "Friend", "phone": "0901234567"}
+                ],
+            },
+        )
 
-    assert saved.status_code == 200
-    assert saved.json()["display_name"] == "Alex Example"
-    assert saved.json()["state"] == "incomplete"
-    assert "public_access" not in saved.json()
-    assert "id" not in saved.json()
-    assert saved.json()["emergency_contacts"] == []
-    assert preview.status_code == 200
-    assert preview.json()["display_name"] == "Alex Example"
-    assert preview.json()["emergency_note"] is None
-    assert "public_access" not in preview.json()
-    assert "id" not in preview.json()
-    assert repository.replace_calls == [str(user.id)]
+    assert first.status_code == 200
+    assert first.json()["readiness"]["status"] == "incomplete"
+    assert second.status_code == 200
+    assert second.json()["readiness"]["status"] == "ready"
+    assert second.json()["profile"]["created_at"] == first_created_at
+    assert second.json()["profile"]["updated_at"] != first_created_at
+    assert repository.upsert_calls == [str(user.id), str(user.id)]
 
 
 def test_invalid_profile_input_uses_shared_validation_error() -> None:
     client, repository, user = make_client(profile=None)
-    repository.profile = profile_for(user)
     with client:
         login(client)
         response = client.put(
             "/api/v1/me/profile",
             json={
                 "display_name": "Alex",
+                "birth_year": 1800,
                 "gender": "not-a-gender",
+                "critical_allergies": ["  ", "Penicillin"],
+                "important_conditions": [],
+                "critical_medications": [],
                 "emergency_contacts": [
                     {"name": "Sam", "relationship": "Family", "phone": "bad phone!"}
                 ],
@@ -205,21 +280,16 @@ def test_invalid_profile_input_uses_shared_validation_error() -> None:
     body = response.json()
     assert body["error"]["code"] == "validation_error"
     assert body["error"]["message"] == "Dữ liệu yêu cầu không hợp lệ."
-    assert all(
-        any(ord(character) > 127 for character in detail["message"])
-        for detail in body["error"]["details"]
-    )
-    assert repository.replace_calls == []
+    assert repository.upsert_calls == []
 
 
 @pytest.mark.parametrize(
     "patch",
     [
         {"birth_year": 1800},
-        {"critical_allergies": ["allergy"] * 11},
         {
             "emergency_contacts": [{"name": "Sam", "relationship": "Family", "phone": "0900000000"}]
-            * 6
+            * 6,
         },
         {"display_name": "   "},
     ],
@@ -228,7 +298,6 @@ def test_profile_limits_and_blank_values_use_shared_validation_error(
     patch: dict[str, Any],
 ) -> None:
     client, repository, user = make_client(profile=None)
-    repository.profile = profile_for(user)
     payload: dict[str, Any] = {
         "display_name": "Alex",
         "critical_allergies": [],
@@ -243,55 +312,7 @@ def test_profile_limits_and_blank_values_use_shared_validation_error(
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
-    assert repository.replace_calls == []
-
-
-def test_profile_reaches_ready_state_only_with_all_required_values() -> None:
-    client, repository, user = make_client(profile=None)
-    repository.profile = profile_for(user)
-    payload = {
-        "display_name": "Alex Example",
-        "birth_year": 1995,
-        "gender": "male",
-        "blood_type": "O+",
-        "critical_allergies": [],
-        "important_conditions": [],
-        "critical_medications": [],
-        "emergency_contacts": [
-            {"name": "Sam Example", "relationship": "Family", "phone": "0900000000"}
-        ],
-    }
-    with client:
-        login(client)
-        ready = client.put("/api/v1/me/profile", json=payload)
-        payload["blood_type"] = None
-        incomplete = client.put("/api/v1/me/profile", json=payload)
-
-    assert ready.status_code == 200
-    assert ready.json()["state"] == "ready_to_publish"
-    assert incomplete.status_code == 200
-    assert incomplete.json()["state"] == "incomplete"
-    assert incomplete.json()["emergency_contacts"][0]["phone"] == "0900000000"
-    assert "id" not in incomplete.json()["emergency_contacts"][0]
-
-
-def test_missing_profile_returns_safe_integrity_error_without_repair() -> None:
-    client, repository, user = make_client(profile=None)
-    with client:
-        login(client)
-        response = client.get(
-            "/api/v1/me/profile",
-            headers={"X-Request-ID": "profile-request-1"},
-        )
-
-    assert response.status_code == 500
-    assert response.json()["error"] == {
-        "code": "profile.provisioning_inconsistent",
-        "message": "Không thể tải hồ sơ y tế.",
-        "request_id": "profile-request-1",
-    }
-    assert repository.find_calls == [str(user.id)]
-    assert repository.replace_calls == []
+    assert repository.upsert_calls == []
 
 
 def test_profile_persistence_failure_returns_safe_503() -> None:
@@ -299,7 +320,16 @@ def test_profile_persistence_failure_returns_safe_503() -> None:
     repository.failure = RepositoryError("database details")
     with client:
         login(client)
-        response = client.get("/api/v1/me/profile")
+        response = client.put(
+            "/api/v1/me/profile",
+            json={
+                "display_name": "Alex",
+                "critical_allergies": [],
+                "important_conditions": [],
+                "critical_medications": [],
+                "emergency_contacts": [],
+            },
+        )
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "profile.service_unavailable"

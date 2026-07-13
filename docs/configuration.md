@@ -17,9 +17,11 @@ For Atlas, set `EMERCARD_MONGODB_URI` to the TLS connection string and use a sep
 
 ## Persistence defaults
 
-The default MongoDB collections are `users`, `medical_profiles`, `cards`, `card_custody_events`, and `idempotency_keys`. The legacy `medical_profiles.public_access` field and index remain for compatibility. See [`database-models.md`](database-models.md) and [`card-persistence.md`](card-persistence.md) for persistence contracts.
+The default MongoDB collections are `users`, `medical_profiles`, `cards`, `card_custody_events`, `idempotency_keys`, and `public_access_links`. The legacy `medical_profiles.public_access` field and index remain for compatibility. See [`database-models.md`](database-models.md) and [`card-persistence.md`](card-persistence.md) for persistence contracts.
 
-`EMERCARD_PUBLIC_CARD_BASE_URL` configures the exact absolute URL prefix used for physical card links, for example `https://app.emercard.id.vn/e`. It must not contain a query or fragment. Provisioning responses are the only API responses that contain a raw card URL/token and are marked `Cache-Control: no-store`.
+`EMERCARD_PUBLIC_CARD_BASE_URL` configures the exact absolute URL prefix used for physical card links, for example `https://app.emercard.id.vn/e`. It must not contain a query or fragment. `EMERCARD_PUBLIC_PROFILE_BASE_URL` configures the quick-demo public-profile page URL prefix, for example `https://app.emercard.id.vn/e`; it must also end with `/e` and must not contain a query or fragment. Provisioning responses are the only API responses that contain a raw card URL/token and are marked `Cache-Control: no-store`.
+
+`EMERCARD_MONGODB_PUBLIC_ACCESS_LINKS_COLLECTION` can rename the quick-demo profile-link collection when required, but it defaults to `public_access_links`.
 
 Anonymous emergency lookup uses these bounded settings:
 

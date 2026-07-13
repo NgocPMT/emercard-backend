@@ -10,11 +10,11 @@ from emercard.modules.profiles.exceptions import (
     ProfileServiceUnavailableError,
 )
 from emercard.modules.profiles.models import (
-    AuthenticatedProfileOutput,
     ProfileDocument,
     ProfileUpsertInput,
+    ProfileView,
     PublicProfileOutput,
-    to_authenticated_profile,
+    to_profile_view,
     to_public_profile,
 )
 
@@ -22,12 +22,12 @@ from emercard.modules.profiles.models import (
 class ProfileRepositoryProtocol(Protocol):
     async def find_by_user_id(self, user_id: str) -> ProfileDocument | None: ...
 
-    async def replace_for_user(
+    async def upsert_for_user(
         self,
         *,
         user_id: str,
         profile: ProfileUpsertInput,
-    ) -> ProfileDocument | None: ...
+    ) -> ProfileDocument: ...
 
 
 class ProfileService:
@@ -36,39 +36,35 @@ class ProfileService:
     def __init__(self, repository: ProfileRepositoryProtocol) -> None:
         self._repository = repository
 
-    async def get_profile(self, *, user_id: str) -> AuthenticatedProfileOutput:
-        profile = await self._load(user_id=user_id)
-        return to_authenticated_profile(profile)
+    async def get_profile(self, *, user_id: str) -> ProfileView:
+        profile = await self._load_optional(user_id=user_id)
+        return to_profile_view(profile)
 
     async def replace_profile(
         self,
         *,
         user_id: str,
         request: ProfileUpsertInput,
-    ) -> AuthenticatedProfileOutput:
-        # The explicit read prevents the legacy upsert path from repairing an
-        # inconsistent registration state before the non-upserting replacement.
-        await self._load(user_id=user_id)
+    ) -> ProfileView:
         try:
-            profile = await self._repository.replace_for_user(
-                user_id=user_id,
-                profile=request,
-            )
+            profile = await self._repository.upsert_for_user(user_id=user_id, profile=request)
         except (RepositoryError, PyMongoError) as error:
             raise ProfileServiceUnavailableError from error
-        if profile is None:
-            raise ProfileProvisioningInconsistentError
-        return to_authenticated_profile(profile)
+        return to_profile_view(profile)
 
     async def get_public_preview(self, *, user_id: str) -> PublicProfileOutput:
-        profile = await self._load(user_id=user_id)
+        profile = await self._load_required(user_id=user_id)
         return to_public_profile(profile)
 
-    async def _load(self, *, user_id: str) -> ProfileDocument:
+    async def _load_optional(self, *, user_id: str) -> ProfileDocument | None:
         try:
             profile = await self._repository.find_by_user_id(user_id)
         except (RepositoryError, PyMongoError) as error:
             raise ProfileServiceUnavailableError from error
+        return profile
+
+    async def _load_required(self, *, user_id: str) -> ProfileDocument:
+        profile = await self._load_optional(user_id=user_id)
         if profile is None:
             raise ProfileProvisioningInconsistentError
         return profile

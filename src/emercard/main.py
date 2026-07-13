@@ -16,6 +16,7 @@ from emercard.api.errors import (
     emergency_exception_handler,
     http_exception_handler,
     profile_exception_handler,
+    public_profile_exception_handler,
     unhandled_exception_handler,
     validation_exception_handler,
 )
@@ -27,6 +28,7 @@ from emercard.modules.auth.exceptions import AuthError
 from emercard.modules.cards.errors import CardError
 from emercard.modules.emergency.errors import EmergencyLookupError
 from emercard.modules.profiles.exceptions import ProfileError
+from emercard.modules.public_links.errors import PublicProfileError
 
 
 @asynccontextmanager
@@ -51,6 +53,7 @@ def create_app(
     idempotency_repository: Any | None = None,
     custody_event_repository: Any | None = None,
     emergency_rate_limiter: Any | None = None,
+    public_access_link_repository: Any | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     logging.getLogger("emercard.request").setLevel(app_settings.log_level)
@@ -80,6 +83,8 @@ def create_app(
         app.state.custody_event_repository = custody_event_repository
     if emergency_rate_limiter is not None:
         app.state.emergency_rate_limiter = emergency_rate_limiter
+    if public_access_link_repository is not None:
+        app.state.public_access_link_repository = public_access_link_repository
 
     app.add_middleware(
         CORSMiddleware,
@@ -93,6 +98,7 @@ def create_app(
     app.add_exception_handler(AuthError, cast(Any, auth_exception_handler))
     app.add_exception_handler(CardError, cast(Any, card_exception_handler))
     app.add_exception_handler(ProfileError, cast(Any, profile_exception_handler))
+    app.add_exception_handler(PublicProfileError, cast(Any, public_profile_exception_handler))
     app.add_exception_handler(EmergencyLookupError, cast(Any, emergency_exception_handler))
     app.add_exception_handler(StarletteHTTPException, cast(Any, http_exception_handler))
     app.add_exception_handler(RequestValidationError, cast(Any, validation_exception_handler))

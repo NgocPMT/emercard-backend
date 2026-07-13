@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     mongodb_cards_collection: str = "cards"
     mongodb_custody_events_collection: str = "card_custody_events"
     mongodb_idempotency_collection: str = "idempotency_keys"
+    mongodb_public_access_links_collection: str = "public_access_links"
     mongodb_test_database_prefix: str = "emercard_test"
     mongodb_index_initialization_mode: IndexInitializationMode = "disabled"
 
@@ -56,6 +57,7 @@ class Settings(BaseSettings):
     public_link_route_prefix: str = "/p"
     public_link_explicit_publication: bool = True
     public_card_base_url: str = "http://localhost:8000/e"
+    public_profile_base_url: str = "http://localhost:4321/e"
     emergency_token_max_length: Annotated[int, Field(ge=43, le=512)] = 128
     emergency_rate_limit_window_seconds: Annotated[int, Field(ge=1, le=3_600)] = 60
     emergency_rate_limit_burst: Annotated[int, Field(ge=1, le=10_000)] = 30
@@ -101,6 +103,7 @@ class Settings(BaseSettings):
         "mongodb_cards_collection",
         "mongodb_custody_events_collection",
         "mongodb_idempotency_collection",
+        "mongodb_public_access_links_collection",
         "mongodb_test_database_prefix",
         "auth_cookie_name",
     )
@@ -124,15 +127,17 @@ class Settings(BaseSettings):
             raise ValueError("frontend_base_url must be an absolute http(s) URL")
         return normalized
 
-    @field_validator("public_card_base_url")
+    @field_validator("public_card_base_url", "public_profile_base_url")
     @classmethod
-    def validate_public_card_base_url(cls, value: str) -> str:
+    def validate_public_base_url(cls, value: str) -> str:
         normalized = value.strip().rstrip("/")
         parsed = urlparse(normalized)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("public_card_base_url must be an absolute http(s) URL")
+            raise ValueError("public base URL must be an absolute http(s) URL")
         if parsed.query or parsed.fragment:
-            raise ValueError("public_card_base_url must not contain a query or fragment")
+            raise ValueError("public base URL must not contain a query or fragment")
+        if parsed.path.rstrip("/") != "/e":
+            raise ValueError("public base URL must end with /e")
         return normalized
 
     @field_validator("auth_cookie_domain")
@@ -201,6 +206,8 @@ class Settings(BaseSettings):
                 raise ValueError("frontend_base_url must use https for deployments")
             if self.frontend_base_url not in self.cors_origins:
                 raise ValueError("frontend_base_url must be included in cors_origins")
+            if not self.public_profile_base_url.startswith("https://"):
+                raise ValueError("public_profile_base_url must use https for deployments")
         if self.auth_cookie_same_site == "none" and not self.auth_cookie_secure:
             raise ValueError("auth_cookie_secure must be true when auth_cookie_same_site is 'none'")
         return self

@@ -13,13 +13,20 @@ from emercard.core.config import get_settings
 from emercard.core.types import ObjectIdValue, UtcDateTime
 
 ProfileState = Literal["incomplete", "ready_to_publish"]
+ProfileReadinessStatus = Literal["not_started", "incomplete", "ready"]
 
 
 class Gender(StrEnum):
     FEMALE = "female"
     MALE = "male"
-    NON_BINARY = "non_binary"
+    OTHER = "other"
     PREFER_NOT_TO_SAY = "prefer_not_to_say"
+
+    @classmethod
+    def _missing_(cls, value: object) -> Gender | None:
+        if value == "non_binary":
+            return cls.OTHER
+        return None
 
 
 class BloodType(StrEnum):
@@ -31,6 +38,7 @@ class BloodType(StrEnum):
     AB_NEGATIVE = "AB-"
     O_POSITIVE = "O+"
     O_NEGATIVE = "O-"
+    UNKNOWN = "unknown"
 
 
 class ProfileModel(BaseModel):
@@ -46,12 +54,29 @@ def _bounded_text(value: str, *, maximum: int, field_name: str) -> str:
     return normalized
 
 
-def _medical_item(value: str) -> str:
-    return _bounded_text(
-        value,
-        maximum=get_settings().medical_item_max_length,
-        field_name="mục thông tin y tế",
-    )
+def _normalize_medical_list(value: list[str]) -> list[str]:
+    settings = get_settings()
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        cleaned = item.strip()
+        if not cleaned:
+            continue
+        if len(cleaned) > settings.medical_item_max_length:
+            raise ValueError(
+                f"mục thông tin y tế không được dài quá {settings.medical_item_max_length} ký tự"
+            )
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        if len(normalized) >= settings.medical_list_max_items:
+            raise ValueError(
+                f"medical list must contain at most {settings.medical_list_max_items} items"
+            )
+        seen.add(key)
+        normalized.append(cleaned)
+    return normalized
 
 
 _PHONE_PATTERN = re.compile(r"^0\d{9}$")
@@ -205,12 +230,7 @@ class ProfileDocument(ProfileModel):
     @field_validator("critical_allergies", "important_conditions", "critical_medications")
     @classmethod
     def validate_medical_list(cls, value: list[str]) -> list[str]:
-        settings = get_settings()
-        if len(value) > settings.medical_list_max_items:
-            raise ValueError(
-                f"medical list must contain at most {settings.medical_list_max_items} items"
-            )
-        return [_medical_item(item) for item in value]
+        return _normalize_medical_list(value)
 
     @field_validator("emergency_note")
     @classmethod
@@ -277,12 +297,7 @@ class ProfileUpsertInput(ProfileModel):
     @field_validator("critical_allergies", "important_conditions", "critical_medications")
     @classmethod
     def validate_medical_list(cls, value: list[str]) -> list[str]:
-        settings = get_settings()
-        if len(value) > settings.medical_list_max_items:
-            raise ValueError(
-                f"medical list must contain at most {settings.medical_list_max_items} items"
-            )
-        return [_medical_item(item) for item in value]
+        return _normalize_medical_list(value)
 
     @field_validator("emergency_note")
     @classmethod
@@ -330,7 +345,7 @@ class ProfileDashboardOutput(ProfileModel):
 
 
 class AuthenticatedProfileOutput(ProfileModel):
-    """Sanitized current-user profile response without persistence metadata."""
+    """Sanitized current-user profile response without ownership or readiness metadata."""
 
     display_name: str | None
     birth_year: int | None
@@ -341,9 +356,25 @@ class AuthenticatedProfileOutput(ProfileModel):
     critical_medications: list[str]
     emergency_note: str | None
     emergency_contacts: list[EmergencyContactPublic]
-    state: ProfileState
     created_at: UtcDateTime
     updated_at: UtcDateTime
+
+
+class ProfileReadiness(ProfileModel):
+    """Derived profile completion state for authenticated UI flows."""
+
+    status: ProfileReadinessStatus
+    missing_fields: list[str]
+    required_contact_count: int
+    completed_required_field_count: int
+    total_required_field_count: int
+
+
+class ProfileView(ProfileModel):
+    """Current-user profile envelope with explicit readiness metadata."""
+
+    profile: AuthenticatedProfileOutput | None
+    readiness: ProfileReadiness
 
 
 class PublicProfileOutput(ProfileModel):
@@ -372,6 +403,66 @@ def _public_contacts(profile: ProfileDocument) -> list[EmergencyContactPublic]:
     ]
 
 
+def _required_profile_fields(profile: ProfileDocument | None) -> tuple[list[str], int]:
+    required_fields = ["display_name", "birth_year", "gender", "blood_type", "emergency_contacts"]
+    if profile is None:
+        return required_fields, 0
+    completed = sum(
+        (
+            bool(profile.display_name),
+            profile.birth_year is not None,
+            profile.gender is not None,
+            profile.blood_type is not None,
+            len(profile.emergency_contacts) > 0,
+        )
+    )
+    missing = [
+        field
+        for field, satisfied in zip(
+            required_fields,
+            (
+                bool(profile.display_name),
+                profile.birth_year is not None,
+                profile.gender is not None,
+                profile.blood_type is not None,
+                len(profile.emergency_contacts) > 0,
+            ),
+            strict=True,
+        )
+        if not satisfied
+    ]
+    return missing, completed
+
+
+def profile_readiness(profile: ProfileDocument | None) -> ProfileReadiness:
+    """Derive the authenticated profile completion state."""
+
+    missing_fields, completed = _required_profile_fields(profile)
+    if profile is None:
+        return ProfileReadiness(
+            status="not_started",
+            missing_fields=missing_fields,
+            required_contact_count=1,
+            completed_required_field_count=0,
+            total_required_field_count=5,
+        )
+    if profile_state(profile) == "ready_to_publish":
+        return ProfileReadiness(
+            status="ready",
+            missing_fields=[],
+            required_contact_count=1,
+            completed_required_field_count=5,
+            total_required_field_count=5,
+        )
+    return ProfileReadiness(
+        status="incomplete",
+        missing_fields=missing_fields,
+        required_contact_count=1,
+        completed_required_field_count=completed,
+        total_required_field_count=5,
+    )
+
+
 def to_authenticated_profile(profile: ProfileDocument) -> AuthenticatedProfileOutput:
     """Map a persisted profile to the allowlisted authenticated response."""
 
@@ -385,9 +476,17 @@ def to_authenticated_profile(profile: ProfileDocument) -> AuthenticatedProfileOu
         critical_medications=list(profile.critical_medications),
         emergency_note=profile.emergency_note,
         emergency_contacts=_public_contacts(profile),
-        state=profile_state(profile),
         created_at=profile.created_at,
         updated_at=profile.updated_at,
+    )
+
+
+def to_profile_view(profile: ProfileDocument | None) -> ProfileView:
+    """Map the current-user profile envelope for the authenticated API."""
+
+    return ProfileView(
+        profile=to_authenticated_profile(profile) if profile is not None else None,
+        readiness=profile_readiness(profile),
     )
 
 

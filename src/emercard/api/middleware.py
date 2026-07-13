@@ -16,7 +16,7 @@ from emercard.api.errors import error_payload
 
 logger = logging.getLogger("emercard.request")
 _REQUEST_ID_PATTERN = r"^[A-Za-z0-9._-]{1,128}$"
-_EMERGENCY_HEADERS = {
+_LOOKUP_HEADERS = {
     "Cache-Control": "no-store",
     "Pragma": "no-cache",
     "X-Robots-Tag": "noindex, nofollow, noarchive",
@@ -61,8 +61,16 @@ def _is_emergency_path(request: Request) -> bool:
     return request.url.path == base or request.url.path.startswith(f"{base}/")
 
 
-def _emergency_route_template(request: Request) -> str:
+def _is_public_profile_path(request: Request) -> bool:
     prefix = request.app.state.settings.api_prefix.rstrip("/")
+    base = f"{prefix}/public"
+    return request.url.path == base or request.url.path.startswith(f"{base}/")
+
+
+def _lookup_route_template(request: Request) -> str:
+    prefix = request.app.state.settings.api_prefix.rstrip("/")
+    if _is_public_profile_path(request):
+        return f"{prefix}/public/{{token}}"
     return f"{prefix}/emergency/{{token}}"
 
 
@@ -81,6 +89,9 @@ async def request_context_middleware(
     request_id = incoming_id if re.fullmatch(_REQUEST_ID_PATTERN, incoming_id) else str(uuid4())
     request.state.request_id = request_id
     emergency = _is_emergency_path(request)
+    public_profile = _is_public_profile_path(request)
+    lookup = emergency or public_profile
+    request_route = _lookup_route_template(request) if lookup else request.url.path
     started = time.perf_counter()
     rate_limited = False
 
@@ -102,8 +113,8 @@ async def request_context_middleware(
     else:
         response = await call_next(request)
 
-    if emergency:
-        for name, value in _EMERGENCY_HEADERS.items():
+    if lookup:
+        for name, value in _LOOKUP_HEADERS.items():
             response.headers[name] = value
 
     duration_ms = (time.perf_counter() - started) * 1000
@@ -112,14 +123,14 @@ async def request_context_middleware(
         extra={
             "request_id": request_id,
             "method": request.method,
-            "route": _emergency_route_template(request) if emergency else request.url.path,
+            "route": request_route,
             "status_code": response.status_code,
             "duration_ms": round(duration_ms, 2),
             "outcome": (
                 "rate_limited"
                 if rate_limited
-                else _emergency_outcome(response.status_code)
-                if emergency
+                else _lookup_outcome(response.status_code)
+                if lookup
                 else "other"
             ),
         },
@@ -128,11 +139,15 @@ async def request_context_middleware(
     return response
 
 
-def _emergency_outcome(status_code: int) -> str:
+def _lookup_outcome(status_code: int) -> str:
     if status_code == 200:
         return "success"
     if status_code == 404:
         return "not_found"
+    if status_code == 409:
+        return "not_ready"
+    if status_code == 410:
+        return "disabled"
     if status_code == 429:
         return "rate_limited"
     if status_code >= 500:

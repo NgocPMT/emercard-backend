@@ -9,6 +9,8 @@ from emercard.core.config import Settings
 USERS_EMAIL_INDEX = "users_email_unique"
 PROFILES_USER_INDEX = "medical_profiles_user_unique"
 PROFILES_PUBLIC_TOKEN_INDEX = "medical_profiles_public_token_unique"
+PUBLIC_ACCESS_LINKS_PROFILE_INDEX = "public_access_links_profile_unique"
+PUBLIC_ACCESS_LINKS_TOKEN_HASH_INDEX = "public_access_links_token_hash_unique"
 CARDS_SERIAL_INDEX = "cards_serial_unique"
 CARDS_TOKEN_HASH_INDEX = "cards_token_hash_unique"
 CARDS_TOKEN_REVISION_INDEX = "cards_token_revision"
@@ -46,6 +48,14 @@ def collection_indexes(settings: Settings) -> dict[str, list[IndexModel]]:
                 name=PROFILES_PUBLIC_TOKEN_INDEX,
                 unique=True,
                 partialFilterExpression={"public_access.token": {"$type": "string"}},
+            ),
+        ],
+        settings.mongodb_public_access_links_collection: [
+            IndexModel(
+                [("profile_id", ASCENDING)], name=PUBLIC_ACCESS_LINKS_PROFILE_INDEX, unique=True
+            ),
+            IndexModel(
+                [("token_hash", ASCENDING)], name=PUBLIC_ACCESS_LINKS_TOKEN_HASH_INDEX, unique=True
             ),
         ],
         settings.mongodb_cards_collection: [

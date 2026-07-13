@@ -10,8 +10,10 @@ from emercard.modules.profiles import (
     Gender,
     ProfileDocument,
     ProfileUpsertInput,
+    ProfileView,
     PublicAccessDocument,
     PublicProfileOutput,
+    profile_readiness,
     profile_state,
 )
 from emercard.modules.users import (
@@ -62,6 +64,73 @@ def test_profile_input_does_not_accept_client_controlled_ids_or_public_state() -
                 "emergency_contacts": [],
             }
         )
+
+
+def test_gender_accepts_the_legacy_non_binary_input_alias() -> None:
+    assert Gender("non_binary") is Gender.OTHER
+
+
+def test_profile_medical_lists_trim_blank_items_and_deduplicate() -> None:
+    profile = ProfileUpsertInput.model_validate(
+        {
+            "critical_allergies": [" Penicillin ", "", "penicillin", "Aspirin"],
+            "important_conditions": ["  Asthma  ", "ASTHMA", ""],
+            "critical_medications": ["  Salbutamol inhaler  ", "salbutamol inhaler"],
+            "emergency_contacts": [],
+        }
+    )
+
+    assert profile.critical_allergies == ["Penicillin", "Aspirin"]
+    assert profile.important_conditions == ["Asthma"]
+    assert profile.critical_medications == ["Salbutamol inhaler"]
+
+
+def test_profile_readiness_reports_not_started_for_missing_profile() -> None:
+    readiness = profile_readiness(None)
+
+    assert readiness.status == "not_started"
+    assert readiness.missing_fields == [
+        "display_name",
+        "birth_year",
+        "gender",
+        "blood_type",
+        "emergency_contacts",
+    ]
+    assert readiness.required_contact_count == 1
+    assert readiness.completed_required_field_count == 0
+    assert readiness.total_required_field_count == 5
+
+
+def test_profile_view_wraps_profile_and_readiness() -> None:
+    view = ProfileView.model_validate(
+        {
+            "profile": {
+                "display_name": "Alex Example",
+                "birth_year": 1995,
+                "gender": "prefer_not_to_say",
+                "blood_type": "O+",
+                "critical_allergies": [],
+                "important_conditions": [],
+                "critical_medications": [],
+                "emergency_note": None,
+                "emergency_contacts": [
+                    {"name": "Sam Example", "relationship": "Friend", "phone": "0901234567"}
+                ],
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+            },
+            "readiness": {
+                "status": "ready",
+                "missing_fields": [],
+                "required_contact_count": 1,
+                "completed_required_field_count": 5,
+                "total_required_field_count": 5,
+            },
+        }
+    )
+
+    assert view.profile is not None
+    assert view.readiness.status == "ready"
 
 
 @pytest.mark.parametrize(

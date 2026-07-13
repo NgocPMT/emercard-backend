@@ -10,33 +10,37 @@ services:
     volumes:
       - mongodb-data:/data/db
     healthcheck:
-      test: ["CMD-SHELL", "mongosh --quiet --host localhost --eval 'db.adminCommand({ ping: 1 }).ok' | grep -q 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh --quiet --host localhost --eval 'db.adminCommand({ ping: 1 }).ok' | grep -q 1",
+        ]
       interval: 5s
       timeout: 5s
       retries: 12
       start_period: 10s
 
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    environment:
-      EMERCARD_ENVIRONMENT: local
-      EMERCARD_DEBUG: "false"
-      EMERCARD_HOST: 0.0.0.0
-      EMERCARD_PORT: 8000
-      EMERCARD_MONGODB_URI: mongodb://mongodb:27017
-      EMERCARD_MONGODB_DATABASE: emercard_local
-      EMERCARD_MONGODB_SERVER_SELECTION_TIMEOUT_MS: 1500
-      EMERCARD_MONGODB_TLS_REQUIRED: "false"
-      EMERCARD_CORS_ORIGINS: '["http://localhost:4321"]'
-      EMERCARD_CORS_ALLOW_CREDENTIALS: "true"
-    ports:
-      - "8000:8000"
-    depends_on:
-      mongodb:
-        condition: service_healthy
+  # api:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   restart: unless-stopped
+  #   environment:
+  #     EMERCARD_ENVIRONMENT: local
+  #     EMERCARD_DEBUG: "false"
+  #     EMERCARD_HOST: 0.0.0.0
+  #     EMERCARD_PORT: 8000
+  #     EMERCARD_MONGODB_URI: mongodb://mongodb:27017
+  #     EMERCARD_MONGODB_DATABASE: emercard_local
+  #     EMERCARD_MONGODB_SERVER_SELECTION_TIMEOUT_MS: 1500
+  #     EMERCARD_MONGODB_TLS_REQUIRED: "false"
+  #     EMERCARD_CORS_ORIGINS: '["http://localhost:4321"]'
+  #     EMERCARD_CORS_ALLOW_CREDENTIALS: "true"
+  #   ports:
+  #     - "8000:8000"
+  #   depends_on:
+  #     mongodb:
+  #       condition: service_healthy
 
 volumes:
   mongodb-data:

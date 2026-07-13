@@ -23,10 +23,16 @@ def test_deployment_settings_require_non_debug_and_future_auth_secret() -> None:
             cors_allow_credentials=True,
             cors_origins=["https://demo.example.com"],
             frontend_base_url="https://demo.example.com",
+            public_profile_base_url="https://demo.example.com/e",
         )
 
     with pytest.raises(ValidationError, match="debug"):
-        Settings(environment="demo", debug=True, auth_secret=SecretStr("x" * 32))
+        Settings(
+            environment="demo",
+            debug=True,
+            auth_secret=SecretStr("x" * 32),
+            public_profile_base_url="https://demo.example.com/e",
+        )
 
 
 def test_production_requires_tls() -> None:
@@ -36,6 +42,7 @@ def test_production_requires_tls() -> None:
             debug=False,
             auth_secret=SecretStr("x" * 32),
             mongodb_tls_required=False,
+            public_profile_base_url="https://app.emercard.id.vn/e",
         )
 
 
@@ -53,6 +60,7 @@ def test_persistence_and_auth_ready_settings_are_validated() -> None:
         cors_origins=["https://demo.example.com"],
         cors_allow_credentials=True,
         frontend_base_url="https://demo.example.com",
+        public_profile_base_url="https://demo.example.com/e",
         mongodb_index_initialization_mode="startup",
         public_link_route_prefix="/public",
     )
@@ -60,7 +68,9 @@ def test_persistence_and_auth_ready_settings_are_validated() -> None:
     assert settings.mongodb_users_collection == "users"
     assert settings.mongodb_profiles_collection == "medical_profiles"
     assert settings.mongodb_cards_collection == "cards"
+    assert settings.mongodb_public_access_links_collection == "public_access_links"
     assert settings.public_link_token_bytes == 32
+    assert settings.public_profile_base_url == "https://demo.example.com/e"
     assert settings.auth_cookie_http_only is True
     assert settings.public_link_route_prefix == "/public"
 
@@ -75,6 +85,9 @@ def test_unsafe_cookie_and_public_url_settings_are_rejected() -> None:
 
     with pytest.raises(ValidationError, match="frontend_base_url"):
         Settings(environment="test", frontend_base_url="not-a-url")
+
+    with pytest.raises(ValidationError, match="public_profile_base_url"):
+        Settings(environment="test", public_profile_base_url="not-a-url")
 
     with pytest.raises(ValidationError, match="auth_cookie_domain"):
         Settings(environment="test", auth_cookie_domain="emercard.id.vn")
@@ -100,5 +113,6 @@ def test_deployments_require_credentialed_exact_frontend_origin() -> None:
             auth_cookie_secure=True,
             cors_allow_credentials=True,
             frontend_base_url="http://app.emercard.id.vn",
+            public_profile_base_url="http://app.emercard.id.vn/e",
             cors_origins=["http://app.emercard.id.vn"],
         )
