@@ -205,7 +205,6 @@ class CardRepository:
                 "serial": serial,
                 "owner_id": None,
                 "token_hash": token_hash,
-                "token_revision": 1 if token_hash is not None else 0,
                 "provisioned_at": timestamp if token_hash is not None else None,
                 "replaces_card_id": replaces_card_id,
                 "status": CardStatus.UNASSIGNED,
@@ -256,6 +255,28 @@ class CardRepository:
             return None
         timestamp = now or NOW
         updated = card.model_copy(update={"issued_at": timestamp, "updated_at": timestamp})
+        self.cards[updated.id] = updated
+        return updated
+
+    async def confirm_encoding_without_token_hash(
+        self,
+        *,
+        card_id: ObjectId | str,
+        admin_id: ObjectId | str,
+        now: datetime | None = None,
+        session: object | None = None,
+    ) -> CardDocument | None:
+        del session
+        card = await self.find_by_id(card_id)
+        if card is None or card.status is not CardStatus.UNASSIGNED or card.issued_at is not None:
+            return None
+        updated = card.model_copy(
+            update={
+                "encoding_verified_at": now or NOW,
+                "encoded_by_admin_id": ObjectId(admin_id),
+                "updated_at": now or NOW,
+            }
+        )
         self.cards[updated.id] = updated
         return updated
 
@@ -381,6 +402,37 @@ class PublicAccessLinkRepository:
         self.links[updated.id] = updated
         return updated
 
+    async def create_link(
+        self,
+        *,
+        profile_id: ObjectId | str,
+        purpose: PublicLinkPurpose,
+        token_hash: str,
+        label: str | None = None,
+        status: PublicAccessLinkStatus = PublicAccessLinkStatus.ACTIVE,
+        created_by: ObjectId | str | None = None,
+        now: datetime | None = None,
+        session: object | None = None,
+    ) -> PublicAccessLinkDocument:
+        del created_by, session
+        link = PublicAccessLinkDocument.model_validate(
+            {
+                "_id": ObjectId(),
+                "profile_id": ObjectId(profile_id),
+                "purpose": purpose,
+                "label": label,
+                "token_hash": token_hash,
+                "status": status,
+                "created_at": now or NOW,
+                "updated_at": now or NOW,
+                "activated_at": (now or NOW) if status is PublicAccessLinkStatus.ACTIVE else None,
+                "disabled_at": (now or NOW) if status is PublicAccessLinkStatus.DISABLED else None,
+                "revoked_at": None,
+            }
+        )
+        self.links[link.id] = link
+        return link
+
     async def revoke_link(
         self,
         *,
@@ -459,6 +511,29 @@ class CardLinkAssignmentRepository:
         updated = assignment.model_copy(update={"status": CardLinkAssignmentStatus.ACTIVE})
         self.assignments[updated.id] = updated
         return updated
+
+    async def attach_link(
+        self,
+        *,
+        card_id: ObjectId | str,
+        public_access_link_id: ObjectId | str,
+        attached_by_admin_id: ObjectId | str | None = None,
+        now: datetime | None = None,
+        session: object | None = None,
+    ) -> CardLinkAssignmentDocument:
+        del attached_by_admin_id, session
+        assignment = CardLinkAssignmentDocument.model_validate(
+            {
+                "_id": ObjectId(),
+                "card_id": ObjectId(card_id),
+                "public_access_link_id": ObjectId(public_access_link_id),
+                "status": CardLinkAssignmentStatus.ACTIVE,
+                "attached_at": now or NOW,
+                "updated_at": now or NOW,
+            }
+        )
+        self.assignments[assignment.id] = assignment
+        return assignment
 
     async def deactivate_assignment(
         self,
@@ -544,7 +619,6 @@ def card(*, status: CardStatus) -> CardDocument:
         serial=generate_serial(),
         owner_id=OWNER_ID,
         token_hash=hash_public_token(generate_public_token()),
-        token_revision=1,
         provisioned_at=NOW,
         encoding_verified_at=NOW,
         encoded_by_admin_id=ADMIN_ID,
@@ -617,7 +691,6 @@ async def test_user_card_service_rejects_unverified_and_terminal_cards() -> None
         serial=generate_serial(),
         owner_id=OWNER_ID,
         token_hash=hash_public_token(generate_public_token()),
-        token_revision=1,
         provisioned_at=NOW,
         encoding_verified_at=NOW,
         encoded_by_admin_id=ADMIN_ID,
@@ -983,6 +1056,127 @@ async def test_user_card_service_marks_lost_and_replaces_card_access_state() -> 
 
 
 @pytest.mark.asyncio
+async def test_user_card_service_replacement_creates_new_link_for_replacement_card() -> None:
+    linked_profile = profile(ready=True)
+    old_card = card(status=CardStatus.ACTIVE)
+    old_link = PublicAccessLinkDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "profile_id": linked_profile.id,
+            "purpose": PublicLinkPurpose.CARD,
+            "label": "Card access",
+            "token_hash": hash_public_token(generate_public_token()),
+            "status": PublicAccessLinkStatus.ACTIVE,
+            "created_by": ADMIN_ID,
+            "created_at": NOW,
+            "updated_at": NOW,
+            "activated_at": NOW,
+        }
+    )
+    old_assignment = CardLinkAssignmentDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "card_id": old_card.id,
+            "public_access_link_id": old_link.id,
+            "status": CardLinkAssignmentStatus.ACTIVE,
+            "attached_at": NOW,
+            "updated_at": NOW,
+            "attached_by_admin_id": ADMIN_ID,
+        }
+    )
+    repository = CardRepository([old_card])
+    link_repository = PublicAccessLinkRepository([old_link])
+    assignment_repository = CardLinkAssignmentRepository([old_assignment])
+    service = CardService(
+        repository,
+        UserRepository(user()),
+        profile_repository=ProfileRepository(linked_profile),
+        public_access_link_repository=link_repository,
+        card_link_assignment_repository=assignment_repository,
+    )
+
+    replacement = await service.replace(card_id=old_card.id, now=NOW)
+
+    assert repository.cards[replacement.card.id].token_hash is None
+    assert repository.cards[replacement.card.id].status is CardStatus.ASSIGNED
+    assert link_repository.links[old_link.id].status is PublicAccessLinkStatus.DISABLED
+    assert (
+        assignment_repository.assignments[old_assignment.id].status
+        is CardLinkAssignmentStatus.DISABLED
+    )
+    new_assignment = await assignment_repository.find_active_by_card_id(replacement.card.id)
+    assert new_assignment is not None
+    new_link = await link_repository.find_by_id(new_assignment.public_access_link_id)
+    assert new_link is not None
+    assert new_link.profile_id == linked_profile.id
+    assert new_link.purpose is PublicLinkPurpose.CARD
+    assert new_link.status is PublicAccessLinkStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_user_card_service_confirms_encoding_through_assigned_link() -> None:
+    linked_profile = profile(ready=True)
+    linked_card = CardDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "serial": generate_serial(),
+            "owner_id": None,
+            "token_hash": None,
+            "status": CardStatus.UNASSIGNED,
+            "is_current": False,
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+    public_token = generate_public_token()
+    linked = PublicAccessLinkDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "profile_id": linked_profile.id,
+            "purpose": PublicLinkPurpose.CARD,
+            "label": "Card access",
+            "token_hash": hash_public_token(public_token),
+            "status": PublicAccessLinkStatus.PENDING,
+            "created_by": ADMIN_ID,
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+    assignment = CardLinkAssignmentDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "card_id": linked_card.id,
+            "public_access_link_id": linked.id,
+            "status": CardLinkAssignmentStatus.ACTIVE,
+            "attached_at": NOW,
+            "updated_at": NOW,
+            "attached_by_admin_id": ADMIN_ID,
+        }
+    )
+    repository = CardRepository([linked_card])
+    link_repository = PublicAccessLinkRepository([linked])
+    assignment_repository = CardLinkAssignmentRepository([assignment])
+    service = CardService(
+        repository,
+        UserRepository(user()),
+        public_card_base_url="https://app.example/e",
+        profile_repository=ProfileRepository(linked_profile),
+        public_access_link_repository=link_repository,
+        card_link_assignment_repository=assignment_repository,
+    )
+
+    confirmed = await service.confirm_encoding(
+        card_id=linked_card.id,
+        public_url=f"https://app.example/e/{public_token}",
+        admin_id=ADMIN_ID,
+        now=NOW,
+    )
+
+    assert confirmed.encoding_verified_at == NOW
+    assert repository.cards[linked_card.id].encoded_by_admin_id == ADMIN_ID
+
+
+@pytest.mark.asyncio
 async def test_user_card_service_restores_and_revokes_link_state_with_card_actions() -> None:
     linked_profile = profile(ready=True)
     disabled_card = card(status=CardStatus.DISABLED).model_copy(
@@ -1036,9 +1230,7 @@ async def test_user_card_service_restores_and_revokes_link_state_with_card_actio
         is CardLinkAssignmentStatus.ACTIVE
     )
 
-    disabled = await service.disable_user_card(
-        card_id=disabled_card.id, user_id=OWNER_ID, now=NOW
-    )
+    disabled = await service.disable_user_card(card_id=disabled_card.id, user_id=OWNER_ID, now=NOW)
 
     assert repository.cards[disabled_card.id].status is CardStatus.DISABLED
     assert link_repository.links[disabled_link.id].status is PublicAccessLinkStatus.DISABLED
@@ -1056,8 +1248,10 @@ def test_user_card_routes_are_authenticated_and_safe() -> None:
     safe_card = card(status=CardStatus.ACTIVE)
     service.list_user_cards.return_value = [safe_card]
     service.get_user_card.return_value = safe_card
+    service.describe_user_card.return_value = (safe_card, None, None)
     service.activate_user_card.return_value = safe_card
     service.disable_user_card.return_value = safe_card
+    service.mark_lost.return_value = safe_card
     app = create_app(
         settings=settings(),
         database=FakeDatabase(ready=True),
@@ -1072,6 +1266,7 @@ def test_user_card_routes_are_authenticated_and_safe() -> None:
             client.get(f"/api/v1/me/cards/{safe_card.id}"),
             client.post(f"/api/v1/me/cards/{safe_card.id}/activate"),
             client.post(f"/api/v1/me/cards/{safe_card.id}/disable"),
+            client.post(f"/api/v1/me/cards/{safe_card.id}/lost"),
         ]
         login = client.post(
             "/api/v1/auth/login",
@@ -1084,8 +1279,9 @@ def test_user_card_routes_are_authenticated_and_safe() -> None:
         detail = client.get(f"/api/v1/me/cards/{safe_card.id}")
         activated = client.post(f"/api/v1/me/cards/{safe_card.id}/activate")
         disabled = client.post(f"/api/v1/me/cards/{safe_card.id}/disable")
+        lost = client.post(f"/api/v1/me/cards/{safe_card.id}/lost")
 
-    assert [response.status_code for response in unauthenticated] == [401] * 4
+    assert [response.status_code for response in unauthenticated] == [401] * 5
     assert login.status_code == 200
     assert empty.status_code == 200
     assert empty.json() == {"cards": []}
@@ -1094,7 +1290,8 @@ def test_user_card_routes_are_authenticated_and_safe() -> None:
         detail.status_code,
         activated.status_code,
         disabled.status_code,
-    ] == [200] * 4
+        lost.status_code,
+    ] == [200] * 5
     assert set(listed.json()["cards"][0]) == {
         "id",
         "serial",
@@ -1107,6 +1304,9 @@ def test_user_card_routes_are_authenticated_and_safe() -> None:
         "updated_at",
         "can_activate",
         "can_disable",
+        "link_status",
+        "link_purpose",
+        "link_label",
     }
     assert "token_hash" not in listed.text
     assert "public_token" not in listed.text
@@ -1137,6 +1337,9 @@ def test_user_card_route_error_codes(method: str, service_method: str, code: str
     owner = user()
     service = AsyncMock(spec=CardService)
     getattr(service, service_method).side_effect = errors[code]("private details")
+    service.describe_user_card.side_effect = (
+        errors[code]("private details") if method == "detail" else None
+    )
     app = create_app(
         settings=settings(),
         database=FakeDatabase(ready=True),

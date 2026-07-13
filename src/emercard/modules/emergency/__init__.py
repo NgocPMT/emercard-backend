@@ -1,4 +1,4 @@
-"""Anonymous card-backed emergency lookup contracts and service."""
+"""Anonymous emergency lookup contracts and service."""
 
 from emercard.modules.emergency.errors import (
     EmergencyLookupError,
@@ -8,7 +8,7 @@ from emercard.modules.emergency.errors import (
 from emercard.modules.emergency.schemas import EmergencyProfileResponse
 from emercard.modules.emergency.service import (
     EmergencyLookupService,
-    PublicCardRepositoryProtocol,
+    PublicAccessLinkRepositoryProtocol,
     PublicProfileRepositoryProtocol,
 )
 
@@ -18,6 +18,6 @@ __all__ = [
     "EmergencyProfileNotFoundError",
     "EmergencyProfileResponse",
     "EmergencyProfileServiceUnavailableError",
-    "PublicCardRepositoryProtocol",
+    "PublicAccessLinkRepositoryProtocol",
     "PublicProfileRepositoryProtocol",
 ]

@@ -27,7 +27,14 @@ def build_user_card_router() -> APIRouter:
         service: CardService = Depends(get_user_card_service),  # noqa: B008
     ) -> UserCardListOutput:
         cards = await service.list_user_cards(user_id=user.id)
-        return UserCardListOutput(cards=[to_user_card(card) for card in cards])
+        items: list[UserCardOutput] = []
+        for card in cards:
+            detail_card, link, _assignment = await service.describe_user_card(
+                card_id=card.id,
+                user_id=user.id,
+            )
+            items.append(to_user_card(detail_card, link=link))
+        return UserCardListOutput(cards=items)
 
     @router.get("/me/cards/{card_id}", response_model=UserCardOutput)
     async def get_my_card(  # pyright: ignore[reportUnusedFunction]
@@ -35,8 +42,11 @@ def build_user_card_router() -> APIRouter:
         user: CurrentUserOutput = Depends(get_current_user),  # noqa: B008
         service: CardService = Depends(get_user_card_service),  # noqa: B008
     ) -> UserCardOutput:
-        card = await service.get_user_card(card_id=card_id, user_id=user.id)
-        return to_user_card(card)
+        card, link, _assignment = await service.describe_user_card(
+            card_id=card_id,
+            user_id=user.id,
+        )
+        return to_user_card(card, link=link)
 
     @router.post("/me/cards/{card_id}/activate", response_model=UserCardOutput)
     async def activate_my_card(  # pyright: ignore[reportUnusedFunction]
@@ -45,7 +55,11 @@ def build_user_card_router() -> APIRouter:
         service: CardService = Depends(get_user_card_service),  # noqa: B008
     ) -> UserCardOutput:
         card = await service.activate_user_card(card_id=card_id, user_id=user.id)
-        return to_user_card(card)
+        _card, link, _assignment = await service.describe_user_card(
+            card_id=card_id,
+            user_id=user.id,
+        )
+        return to_user_card(card, link=link)
 
     @router.post("/me/cards/{card_id}/disable", response_model=UserCardOutput)
     async def disable_my_card(  # pyright: ignore[reportUnusedFunction]
@@ -54,7 +68,25 @@ def build_user_card_router() -> APIRouter:
         service: CardService = Depends(get_user_card_service),  # noqa: B008
     ) -> UserCardOutput:
         card = await service.disable_user_card(card_id=card_id, user_id=user.id)
-        return to_user_card(card)
+        _card, link, _assignment = await service.describe_user_card(
+            card_id=card_id,
+            user_id=user.id,
+        )
+        return to_user_card(card, link=link)
+
+    @router.post("/me/cards/{card_id}/lost", response_model=UserCardOutput)
+    async def report_my_card_lost(  # pyright: ignore[reportUnusedFunction]
+        card_id: str,
+        user: CurrentUserOutput = Depends(get_current_user),  # noqa: B008
+        service: CardService = Depends(get_user_card_service),  # noqa: B008
+    ) -> UserCardOutput:
+        await service.get_user_card(card_id=card_id, user_id=user.id)
+        card = await service.mark_lost(card_id=card_id)
+        _card, link, _assignment = await service.describe_user_card(
+            card_id=card_id,
+            user_id=user.id,
+        )
+        return to_user_card(card, link=link)
 
     return router
 

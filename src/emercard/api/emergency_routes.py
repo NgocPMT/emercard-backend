@@ -4,9 +4,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 
-from emercard.modules.cards import CardRepository
 from emercard.modules.emergency import EmergencyLookupService, EmergencyProfileResponse
 from emercard.modules.profiles import ProfileRepository
+from emercard.modules.public_links import PublicAccessLinkRepository
 
 
 def build_emergency_router() -> APIRouter:
@@ -26,9 +26,9 @@ def build_emergency_router() -> APIRouter:
 async def get_emergency_lookup_service(request: Request) -> EmergencyLookupService:
     """Build the anonymous lookup service over managed or injected repositories."""
 
-    card_repository: Any = getattr(request.app.state, "card_repository", None)
-    if card_repository is None:
-        card_repository = CardRepository(
+    link_repository: Any = getattr(request.app.state, "public_access_link_repository", None)
+    if link_repository is None:
+        link_repository = PublicAccessLinkRepository(
             request.app.state.database.database,
             request.app.state.settings,
         )
@@ -41,7 +41,7 @@ async def get_emergency_lookup_service(request: Request) -> EmergencyLookupServi
         )
 
     return EmergencyLookupService(
-        card_repository,
+        link_repository,
         profile_repository,
         token_max_length=request.app.state.settings.emergency_token_max_length,
     )

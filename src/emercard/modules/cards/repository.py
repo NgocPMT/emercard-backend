@@ -50,7 +50,6 @@ class CardRepository:
             serial=canonical_serial,
             owner_id=None,
             token_hash=canonical_hash,
-            token_revision=1 if canonical_hash is not None else 0,
             provisioned_at=timestamp if canonical_hash is not None else None,
             status=CardStatus.UNASSIGNED,
             is_current=False,
@@ -310,9 +309,9 @@ class CardRepository:
         if issued is not None:
             query["issued_at"] = {"$type": "date"} if issued else None
         if encoding_state == "not_provisioned":
-            query["token_hash"] = None
+            query["provisioned_at"] = None
         elif encoding_state == "link_generated":
-            query["token_hash"] = {"$type": "string"}
+            query["provisioned_at"] = {"$type": "date"}
             query["encoding_verified_at"] = None
         elif encoding_state == "verified":
             query["encoding_verified_at"] = {"$type": "date"}
@@ -353,7 +352,6 @@ class CardRepository:
                     "provisioned_at": timestamp,
                     "updated_at": timestamp,
                 },
-                "$inc": {"token_revision": 1},
             },
             return_document=ReturnDocument.AFTER,
             **_session_kwargs(session),
@@ -386,7 +384,6 @@ class CardRepository:
                     "provisioned_at": timestamp,
                     "updated_at": timestamp,
                 },
-                "$inc": {"token_revision": 1},
             },
             return_document=ReturnDocument.AFTER,
             **_session_kwargs(session),
@@ -412,6 +409,37 @@ class CardRepository:
                 "status": CardStatus.UNASSIGNED,
                 "owner_id": None,
                 "token_hash": canonical_hash,
+                "encoding_verified_at": None,
+                "issued_at": None,
+            },
+            {
+                "$set": {
+                    "encoding_verified_at": timestamp,
+                    "encoded_by_admin_id": verifier,
+                    "updated_at": timestamp,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+            **_session_kwargs(session),
+        )
+        return _card(document)
+
+    async def confirm_encoding_without_token_hash(
+        self,
+        *,
+        card_id: ObjectId | str,
+        admin_id: ObjectId | str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument | None:
+        identifier = _object_id(card_id)
+        verifier = _object_id(admin_id)
+        timestamp = now or utc_now()
+        document = await self._collection.find_one_and_update(
+            {
+                "_id": identifier,
+                "status": CardStatus.UNASSIGNED,
+                "owner_id": None,
                 "encoding_verified_at": None,
                 "issued_at": None,
             },

@@ -18,6 +18,7 @@
 - `GET /api/v1/me/profile` returns the current user's sanitized medical profile.
 - `PUT /api/v1/me/profile` fully replaces valid editable fields and permits incomplete drafts.
 - `GET /api/v1/me/profile/public-preview` returns the stable public emergency projection.
+- `POST /api/v1/me/profile/public-preview-link` generates a fresh preview URL for the current ready profile and returns `public_url`.
 - All profile routes derive ownership from the authenticated session.
 - Profile `state` is `incomplete` or `ready_to_publish`; it is independent of card and legacy public-link state.
 - Profile responses never expose `public_access`, tokens, profile/user identifiers, or internal emergency-contact IDs.
@@ -78,11 +79,12 @@ Safe card responses never include raw tokens, token hashes, public URLs, medical
 ## Anonymous emergency lookup
 
 - `GET /api/v1/emergency/{token}` is anonymous and does not require a session or bearer credential.
-- The API hashes the raw bearer token before using the constrained card lookup. Only active, current, issued, encoding-verified cards with an owner resolve.
+- The API hashes the raw bearer token before using the constrained public-link lookup. Only active card-purpose links with a ready profile resolve.
 - Success returns `{ "profile": ... }` using the public medical allowlist. It includes `profile_updated_at` and excludes account/card identifiers, serials, token material, contact IDs, `public_access`, profile state, and private metadata.
-- Malformed, unknown, unassigned, assigned, disabled, lost, replaced, void, non-current, ownerless, and missing-profile cases all return `404 emergency_profile.not_found` with the same neutral message. Dependency outages return `503 emergency_profile.service_unavailable`.
+- Malformed, unknown, disabled, revoked, expired, pending, or missing-profile cases all return `404 emergency_profile.not_found` with the same neutral message. Dependency outages return `503 emergency_profile.service_unavailable`.
 - All lookup responses use `Cache-Control: no-store`, `Pragma: no-cache`, `X-Robots-Tag: noindex, nofollow, noarchive`, `Referrer-Policy: no-referrer`, and `X-Content-Type-Options: nosniff`.
 - Anonymous requests use an emergency-friendly per-direct-peer sliding-window rate limit and return `429 rate_limit.exceeded` without token-dependent detail. Forwarded headers are not trusted.
+- The route is a temporary compatibility adapter; new clients must use `/api/v1/public/{token}`.
 - Request logs use `/api/v1/emergency/{token}` as the route template and never include the raw path, token/hash, query string, referrer, request body, or response body.
 
 See [`card-persistence.md`](card-persistence.md) for lifecycle gates, idempotency, event history, and manual NFC/QR encoding responsibilities.

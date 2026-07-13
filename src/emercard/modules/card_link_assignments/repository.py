@@ -96,9 +96,7 @@ class CardLinkAssignmentRepository:
         if await self.find_active_by_card_id(card_identifier, session=session) is not None:
             raise RepositoryConflictError("card already has an active link assignment")
         if (
-            await self.find_active_by_public_access_link_id(
-                link_identifier, session=session
-            )
+            await self.find_active_by_public_access_link_id(link_identifier, session=session)
             is not None
         ):
             raise RepositoryConflictError("public access link is already assigned")

@@ -18,7 +18,6 @@ from emercard.db.indexes import (
     CARDS_SERIAL_INDEX,
     CARDS_STATUS_INDEX,
     CARDS_TOKEN_HASH_INDEX,
-    CARDS_TOKEN_REVISION_INDEX,
     CUSTODY_EVENT_CARD_INDEX,
     CUSTODY_EVENT_OWNER_INDEX,
     IDEMPOTENCY_KEY_INDEX,
@@ -64,7 +63,6 @@ class FakeDatabase:
                 [
                     CARDS_SERIAL_INDEX,
                     CARDS_TOKEN_HASH_INDEX,
-                    CARDS_TOKEN_REVISION_INDEX,
                     CARDS_OWNER_INDEX,
                     CARDS_STATUS_INDEX,
                     CARDS_OWNER_CURRENT_INDEX,
@@ -110,7 +108,6 @@ async def test_initialize_indexes_is_explicit_and_uses_required_collections() ->
         "cards": [
             CARDS_SERIAL_INDEX,
             CARDS_TOKEN_HASH_INDEX,
-            CARDS_TOKEN_REVISION_INDEX,
             CARDS_OWNER_INDEX,
             CARDS_STATUS_INDEX,
             CARDS_OWNER_CURRENT_INDEX,

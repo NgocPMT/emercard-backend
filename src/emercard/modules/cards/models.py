@@ -34,7 +34,6 @@ class CardDocument(CardModel):
     serial: str = Field(min_length=20, max_length=24)
     owner_id: ObjectIdValue | None = None
     token_hash: str | None = Field(default=None, min_length=67, max_length=67)
-    token_revision: int = Field(default=0, ge=0)
     status: CardStatus
     is_current: bool
     provisioned_at: UtcDateTime | None = None
@@ -96,16 +95,12 @@ class CardDocument(CardModel):
         ):
             raise ValueError("lost and replaced cards must have an owner and be non-current")
         if self.token_hash is None:
-            if self.token_revision != 0 or self.provisioned_at is not None:
+            if self.provisioned_at is not None:
                 raise ValueError("unprovisioned cards cannot have provisioning metadata")
             if self.encoding_verified_at is not None or self.encoded_by_admin_id is not None:
                 raise ValueError("unprovisioned cards cannot have encoding metadata")
-        elif self.token_revision == 0 and self.provisioned_at is None:
-            # Cards created by the Phase 1 foundation predate provisioning metadata.
-            # They remain readable but are not eligible for the new admin custody gates.
-            pass
-        elif self.token_revision < 1 or self.provisioned_at is None:
-            raise ValueError("provisioned cards require a revision and timestamp")
+        elif self.provisioned_at is None:
+            raise ValueError("provisioned cards require a timestamp")
         if self.encoding_verified_at is None and self.encoded_by_admin_id is not None:
             raise ValueError("encoding verifier requires a verification timestamp")
         if self.encoding_verified_at is not None and self.encoded_by_admin_id is None:

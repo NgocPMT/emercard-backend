@@ -69,7 +69,6 @@ def managed_card(token: str) -> CardDocument:
         _id=ObjectId(),
         serial=generate_serial(),
         token_hash=hash_public_token(token),
-        token_revision=1,
         status=CardStatus.UNASSIGNED,
         is_current=False,
         provisioned_at=NOW,
@@ -97,6 +96,8 @@ def managed_card(token: str) -> CardDocument:
         ("POST", "/api/v1/admin/cards/card/unassign", None, {}),
         ("POST", "/api/v1/admin/cards/card/issue", None, {}),
         ("POST", "/api/v1/admin/cards/card/void", None, {}),
+        ("POST", "/api/v1/admin/cards/card/lost", None, {}),
+        ("POST", "/api/v1/admin/cards/card/replace", None, {}),
     ],
 )
 def test_every_admin_card_route_requires_an_admin(
@@ -176,6 +177,7 @@ def test_admin_mutation_routes_return_safe_card_metadata() -> None:
         )
     )
     service.reprovision_link = service.provision_link
+    service.describe_admin_card = AsyncMock(return_value=(card, None, None))
     for method in (
         "confirm_encoding",
         "assign_verified_to_user",
@@ -237,8 +239,10 @@ def test_admin_inventory_list_and_detail_are_safe_and_cursor_paginated() -> None
         auth_repository=repository,
         profile_repository=InMemoryProfileRepository(),
     )
+    service = AsyncMock(spec=CardService)
+    service.describe_admin_card = AsyncMock(return_value=(first, None, None))
     app.dependency_overrides[get_card_repository] = lambda: card_repository
-    app.dependency_overrides[get_card_service] = lambda: AsyncMock(spec=CardService)
+    app.dependency_overrides[get_card_service] = lambda: service
 
     with TestClient(app) as client:
         client.post(
@@ -345,6 +349,7 @@ def test_provision_response_returns_raw_link_once_with_no_store() -> None:
             public_url="https://app.example/e/raw-token-for-test",
         )
     )
+    service.describe_admin_card = AsyncMock(return_value=(card, None, None))
     app = create_app(
         settings=settings(),
         database=FakeDatabase(ready=True),

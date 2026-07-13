@@ -50,7 +50,6 @@ def card_document(
         serial=serial or generate_serial(),
         owner_id=owner_id,
         token_hash=hash_public_token(generate_public_token()),
-        token_revision=1,
         provisioned_at=NOW,
         status=status,
         is_current=status in {CardStatus.ASSIGNED, CardStatus.ACTIVE, CardStatus.DISABLED},
@@ -98,7 +97,6 @@ def test_blank_card_document_has_no_token_material_or_provisioning_metadata() ->
     )
 
     assert card.token_hash is None
-    assert card.token_revision == 0
     assert card.provisioned_at is None
     assert card.encoding_verified_at is None
 
@@ -198,7 +196,6 @@ def managed_card(
         serial=generate_serial(),
         owner_id=owner_id,
         token_hash=hash_public_token(token),
-        token_revision=1,
         status=status,
         is_current=status in {CardStatus.ASSIGNED, CardStatus.ACTIVE, CardStatus.DISABLED},
         provisioned_at=NOW,
@@ -277,9 +274,7 @@ class AdminFakeCardRepository:
         self, *, card_id: ObjectId | str, token_hash: str, **kwargs: Any
     ) -> CardDocument | None:
         card = self.cards[ObjectId(card_id)]
-        updated = card.model_copy(
-            update={"token_hash": token_hash, "token_revision": 1, "provisioned_at": NOW}
-        )
+        updated = card.model_copy(update={"token_hash": token_hash, "provisioned_at": NOW})
         self.cards[updated.id] = updated
         return updated
 
@@ -290,7 +285,6 @@ class AdminFakeCardRepository:
         updated = card.model_copy(
             update={
                 "token_hash": token_hash,
-                "token_revision": card.token_revision + 1,
                 "provisioned_at": NOW,
             }
         )
@@ -308,6 +302,21 @@ class AdminFakeCardRepository:
         card = self.cards[ObjectId(card_id)]
         if card.token_hash != token_hash:
             return None
+        updated = card.model_copy(
+            update={"encoding_verified_at": NOW, "encoded_by_admin_id": ObjectId(admin_id)}
+        )
+        self.cards[updated.id] = updated
+        return updated
+
+    async def confirm_encoding_without_token_hash(
+        self,
+        *,
+        card_id: ObjectId | str,
+        admin_id: ObjectId | str,
+        **kwargs: Any,
+    ) -> CardDocument | None:
+        del kwargs
+        card = self.cards[ObjectId(card_id)]
         updated = card.model_copy(
             update={"encoding_verified_at": NOW, "encoded_by_admin_id": ObjectId(admin_id)}
         )
@@ -687,7 +696,6 @@ async def test_service_replacement_links_old_and_new_cards() -> None:
     assert old_card.replacement_card_id == new_card.id
     assert new_card.replaces_card_id == old_card.id
     assert new_card.status is CardStatus.ASSIGNED
-    assert new_card.token_revision == 1
     assert new_card.provisioned_at == NOW
     assert replacement.public_token not in new_card.model_dump().values()
 

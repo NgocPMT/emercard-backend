@@ -20,7 +20,6 @@ CARD_LINK_ASSIGNMENTS_ACTIVE_CARD_INDEX = "card_link_assignments_active_card_uni
 CARD_LINK_ASSIGNMENTS_ACTIVE_LINK_INDEX = "card_link_assignments_active_link_unique"
 CARDS_SERIAL_INDEX = "cards_serial_unique"
 CARDS_TOKEN_HASH_INDEX = "cards_token_hash_unique"
-CARDS_TOKEN_REVISION_INDEX = "cards_token_revision"
 CARDS_OWNER_INDEX = "cards_owner"
 CARDS_STATUS_INDEX = "cards_status"
 CARDS_OWNER_CURRENT_INDEX = "cards_owner_current"
@@ -96,7 +95,6 @@ def collection_indexes(settings: Settings) -> dict[str, list[IndexModel]]:
                 unique=True,
                 partialFilterExpression={"token_hash": {"$type": "string"}},
             ),
-            IndexModel([("token_revision", ASCENDING)], name=CARDS_TOKEN_REVISION_INDEX),
             IndexModel([("owner_id", ASCENDING)], name=CARDS_OWNER_INDEX),
             IndexModel([("status", ASCENDING)], name=CARDS_STATUS_INDEX),
             IndexModel(
