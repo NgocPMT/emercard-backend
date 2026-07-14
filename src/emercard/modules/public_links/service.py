@@ -128,27 +128,6 @@ class PublicProfileLinkService:
         self._public_profile_base_url = public_profile_base_url.rstrip("/")
         self._issued_tokens: dict[tuple[str, PublicLinkPurpose], _IssuedToken] = {}
 
-    async def create_preview_link(
-        self, *, profile_id: ObjectId | str, now: datetime | None = None
-    ) -> PublicProfileLinkResult:
-        profile = await self._load_ready_profile(profile_id)
-        persisted, token = await self._create_link(
-            profile.id,
-            purpose=PublicLinkPurpose.STANDALONE,
-            now=now,
-            label="Xem trước",
-        )
-        issued = self._cache(profile.id, PublicLinkPurpose.STANDALONE, token)
-        return PublicProfileLinkResult(
-            action="create_preview_link",
-            status="created",
-            profile_id=str(profile.id),
-            public_url=issued.public_url,
-            raw_token=issued.raw_token,
-            link_id=str(persisted.id),
-            purpose=persisted.purpose,
-        )
-
     async def generate(
         self, *, profile_id: ObjectId | str, now: datetime | None = None
     ) -> PublicProfileLinkResult:

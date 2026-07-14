@@ -22,11 +22,7 @@ from emercard.modules.public_links.models import (
     PublicProfileLookupResult,
 )
 from emercard.modules.public_links.repository import PublicAccessLinkRepository
-from emercard.modules.public_links.schemas import (
-    PublicProfileLinkOperationResponse,
-    PublicProfilePreviewLinkResponse,
-    PublicProfileResponse,
-)
+from emercard.modules.public_links.schemas import PublicProfileResponse
 from emercard.modules.public_links.service import PublicProfileLinkService
 
 __all__ = [
@@ -44,8 +40,6 @@ __all__ = [
     "PublicProfileLookupService",
     "PublicProfileNotFoundError",
     "PublicProfileNotReadyError",
-    "PublicProfileLinkOperationResponse",
-    "PublicProfilePreviewLinkResponse",
     "PublicProfileResponse",
     "PublicProfileRevokedError",
     "PublicProfileServiceUnavailableError",

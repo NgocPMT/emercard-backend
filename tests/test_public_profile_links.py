@@ -657,14 +657,12 @@ def test_public_profile_route_returns_safe_503_on_dependency_failure() -> None:
     assert "db secret" not in response.text
 
 
-def test_profile_preview_link_route_returns_public_url() -> None:
-    link_repository = InMemoryLinkRepository(None)
-    profile_repository = InMemoryProfileRepository(ready_profile())
+def test_profile_preview_link_routes_are_removed() -> None:
     app = create_app(
         settings=settings(),
         database=FakeDatabase(ready=True),
-        public_access_link_repository=link_repository,
-        profile_repository=profile_repository,
+        public_access_link_repository=InMemoryLinkRepository(None),
+        profile_repository=InMemoryProfileRepository(ready_profile()),
     )
     app.dependency_overrides[get_current_user] = lambda: CurrentUserOutput(
         id=str(OWNER_ID),
@@ -675,69 +673,14 @@ def test_profile_preview_link_route_returns_public_url() -> None:
     )
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/me/profile/public-preview-link")
-
-    assert response.status_code == 200
-    public_url = response.json()["public_url"]
-    assert public_url.startswith("https://app.example/e/")
-    assert link_repository.create_calls == [
-        (
-            str(PROFILE_ID),
-            PublicLinkPurpose.STANDALONE,
-            hash_public_token(public_url.rsplit("/", 1)[-1]),
-        )
-    ]
-
-
-def test_profile_preview_link_routes_support_generate_regenerate_and_disable() -> None:
-    link_repository = InMemoryLinkRepository(None)
-    profile_repository = InMemoryProfileRepository(ready_profile())
-    app = create_app(
-        settings=settings(),
-        database=FakeDatabase(ready=True),
-        public_access_link_repository=link_repository,
-        profile_repository=profile_repository,
-    )
-    app.dependency_overrides[get_current_user] = lambda: CurrentUserOutput(
-        id=str(OWNER_ID),
-        email="alex@example.test",
-        role="user",
-        created_at=NOW,
-        updated_at=NOW,
-    )
-
-    with TestClient(app) as client:
-        generated = client.post("/api/v1/me/profile/public-preview-link/generate")
-        regenerated = client.post("/api/v1/me/profile/public-preview-link/regenerate")
-        disabled = client.post("/api/v1/me/profile/public-preview-link/disable")
-
-    assert generated.status_code == 200
-    assert regenerated.status_code == 200
-    assert disabled.status_code == 200
-    assert generated.json()["action"] == "generate"
-    assert regenerated.json()["action"] == "regenerate"
-    assert regenerated.json()["status"] == "rotated"
-    assert disabled.json()["action"] == "disable"
-    assert disabled.json()["status"] == "disabled"
-    assert disabled.json()["public_url"] is None
-    assert "raw_token" not in generated.text + regenerated.text + disabled.text
-
-
-@pytest.mark.asyncio
-async def test_public_preview_link_route_issues_fresh_urls_each_time() -> None:
-    link_repository = InMemoryLinkRepository(None)
-    profile_repository = InMemoryProfileRepository(ready_profile())
-    service = PublicProfileLinkService(
-        link_repository, profile_repository, public_profile_base_url="https://app.example/e"
-    )
-
-    first = await service.create_preview_link(profile_id=PROFILE_ID)
-    second = await service.create_preview_link(profile_id=PROFILE_ID)
-
-    assert first.public_url is not None and second.public_url is not None
-    assert first.public_url != second.public_url
-    assert len(link_repository.links) == 2
-
+        for path in (
+            "/api/v1/me/profile/public-preview-link",
+            "/api/v1/me/profile/public-preview-link/generate",
+            "/api/v1/me/profile/public-preview-link/regenerate",
+            "/api/v1/me/profile/public-preview-link/disable",
+        ):
+            response = client.post(path)
+            assert response.status_code == 404
 
 @pytest.mark.asyncio
 async def test_public_lookup_reflects_profile_updates_on_the_same_token() -> None:

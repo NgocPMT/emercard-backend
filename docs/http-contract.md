@@ -19,13 +19,9 @@ This document summarizes the implemented backend routes and response rules. It f
 
 - `GET /api/v1/me/profile` returns the current user's sanitized medical profile.
 - `PUT /api/v1/me/profile` fully replaces editable profile fields.
-- `GET /api/v1/me/profile/public-preview` returns the public allowlist projection.
-- `POST /api/v1/me/profile/public-preview-link` returns a one-time preview URL for the current profile.
-- `POST /api/v1/me/profile/public-preview-link/generate` creates or reuses the standalone preview link.
-- `POST /api/v1/me/profile/public-preview-link/regenerate` rotates the standalone preview link.
-- `POST /api/v1/me/profile/public-preview-link/disable` disables the standalone preview link.
+- `GET /api/v1/me/profile/public-preview` returns the public allowlist projection used for the in-app preview UI.
 
-Profile routes derive ownership from the authenticated session. Profile responses never expose `public_access`, tokens, profile/user identifiers, or internal emergency-contact IDs.
+Profile routes derive ownership from the authenticated session. Profile responses never expose `public_access`, tokens, profile/user identifiers, or internal emergency-contact IDs. User-facing standalone preview-link creation and lifecycle endpoints are not exposed.
 
 ## User cards
 

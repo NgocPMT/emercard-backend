@@ -6,18 +6,11 @@ from fastapi import APIRouter, Depends, Request
 
 from emercard.api.auth_routes import get_current_user
 from emercard.modules.profiles import (
-    ProfileProvisioningInconsistentError,
     ProfileRepository,
     ProfileService,
     ProfileUpsertInput,
     ProfileView,
     PublicProfileOutput,
-)
-from emercard.modules.public_links import (
-    PublicAccessLinkRepository,
-    PublicProfileLinkOperationResponse,
-    PublicProfileLinkService,
-    PublicProfilePreviewLinkResponse,
 )
 from emercard.modules.users import CurrentUserOutput
 
@@ -47,75 +40,6 @@ def build_profile_router() -> APIRouter:
     ) -> PublicProfileOutput:  # pyright: ignore[reportUnusedFunction]
         return await service.get_public_preview(user_id=user.id)
 
-    @router.post("/me/profile/public-preview-link", response_model=PublicProfilePreviewLinkResponse)
-    async def public_preview_link(  # pyright: ignore[reportUnusedFunction]
-        user: CurrentUserOutput = Depends(get_current_user),  # noqa: B008
-        service: PublicProfileLinkService = Depends(get_public_profile_link_service),  # noqa: B008
-        repository: ProfileRepository = Depends(get_profile_repository),  # noqa: B008
-    ) -> PublicProfilePreviewLinkResponse:  # pyright: ignore[reportUnusedFunction]
-        profile = await repository.find_by_user_id(user.id)
-        if profile is None:
-            raise ProfileProvisioningInconsistentError
-        result = await service.create_preview_link(profile_id=profile.id)
-        assert result.public_url is not None
-        return PublicProfilePreviewLinkResponse(public_url=result.public_url)
-
-    @router.post(
-        "/me/profile/public-preview-link/generate",
-        response_model=PublicProfileLinkOperationResponse,
-    )
-    async def generate_public_preview_link(  # pyright: ignore[reportUnusedFunction]
-        user: CurrentUserOutput = Depends(get_current_user),  # noqa: B008
-        service: PublicProfileLinkService = Depends(get_public_profile_link_service),  # noqa: B008
-        repository: ProfileRepository = Depends(get_profile_repository),  # noqa: B008
-    ) -> PublicProfileLinkOperationResponse:  # pyright: ignore[reportUnusedFunction]
-        profile = await repository.find_by_user_id(user.id)
-        if profile is None:
-            raise ProfileProvisioningInconsistentError
-        result = await service.generate(profile_id=profile.id)
-        return PublicProfileLinkOperationResponse(
-            action=result.action,
-            status=result.status,
-            public_url=result.public_url,
-        )
-
-    @router.post(
-        "/me/profile/public-preview-link/regenerate",
-        response_model=PublicProfileLinkOperationResponse,
-    )
-    async def regenerate_public_preview_link(  # pyright: ignore[reportUnusedFunction]
-        user: CurrentUserOutput = Depends(get_current_user),  # noqa: B008
-        service: PublicProfileLinkService = Depends(get_public_profile_link_service),  # noqa: B008
-        repository: ProfileRepository = Depends(get_profile_repository),  # noqa: B008
-    ) -> PublicProfileLinkOperationResponse:  # pyright: ignore[reportUnusedFunction]
-        profile = await repository.find_by_user_id(user.id)
-        if profile is None:
-            raise ProfileProvisioningInconsistentError
-        result = await service.regenerate(profile_id=profile.id)
-        return PublicProfileLinkOperationResponse(
-            action=result.action,
-            status=result.status,
-            public_url=result.public_url,
-        )
-
-    @router.post(
-        "/me/profile/public-preview-link/disable", response_model=PublicProfileLinkOperationResponse
-    )
-    async def disable_public_preview_link(  # pyright: ignore[reportUnusedFunction]
-        user: CurrentUserOutput = Depends(get_current_user),  # noqa: B008
-        service: PublicProfileLinkService = Depends(get_public_profile_link_service),  # noqa: B008
-        repository: ProfileRepository = Depends(get_profile_repository),  # noqa: B008
-    ) -> PublicProfileLinkOperationResponse:  # pyright: ignore[reportUnusedFunction]
-        profile = await repository.find_by_user_id(user.id)
-        if profile is None:
-            raise ProfileProvisioningInconsistentError
-        result = await service.disable(profile_id=profile.id)
-        return PublicProfileLinkOperationResponse(
-            action=result.action,
-            status=result.status,
-            public_url=None,
-        )
-
     return router
 
 
@@ -136,25 +60,3 @@ async def get_profile_service(request: Request) -> ProfileService:
     return ProfileService(repository)
 
 
-async def get_public_profile_link_service(request: Request) -> PublicProfileLinkService:
-    """Build the authenticated public-link service over managed repositories."""
-
-    link_repository: Any = getattr(request.app.state, "public_access_link_repository", None)
-    if link_repository is None:
-        link_repository = PublicAccessLinkRepository(
-            request.app.state.database.database,
-            request.app.state.settings,
-        )
-
-    profile_repository: Any = getattr(request.app.state, "profile_repository", None)
-    if profile_repository is None:
-        profile_repository = ProfileRepository(
-            request.app.state.database.database,
-            request.app.state.settings,
-        )
-
-    return PublicProfileLinkService(
-        link_repository,
-        profile_repository,
-        public_profile_base_url=request.app.state.settings.public_profile_base_url,
-    )
