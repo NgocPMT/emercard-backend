@@ -14,7 +14,11 @@ from emercard.modules.card_link_assignments.models import CardLinkAssignmentDocu
 from emercard.modules.cards.identity import hash_public_token
 from emercard.modules.profiles.models import ProfileDocument, to_public_profile
 from emercard.modules.public_links.errors import (
+    PublicProfileDisabledError,
+    PublicProfileExpiredError,
     PublicProfileNotFoundError,
+    PublicProfilePendingError,
+    PublicProfileRevokedError,
     PublicProfileServiceUnavailableError,
 )
 from emercard.modules.public_links.models import (
@@ -28,10 +32,6 @@ _TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class PublicAccessLinkRepositoryProtocol(Protocol):
-    async def find_active_by_token_hash(
-        self, token_hash: str, *, session: object | None = None
-    ) -> PublicAccessLinkDocument | None: ...
-
     async def find_by_token_hash(
         self, token_hash: str, *, session: object | None = None
     ) -> PublicAccessLinkDocument | None: ...
@@ -69,13 +69,7 @@ class PublicProfileLookupService:
 
         try:
             token_hash = hash_public_token(raw_token)
-            find_active = getattr(self._link_repository, "find_active_by_token_hash", None)
-            if callable(find_active):
-                link = await find_active(token_hash)
-            else:
-                link = await self._link_repository.find_by_token_hash(token_hash)
-                if link is not None and link.status is not PublicAccessLinkStatus.ACTIVE:
-                    link = None
+            link = await self._link_repository.find_by_token_hash(token_hash)
         except (RepositoryError, PyMongoError) as error:
             raise PublicProfileServiceUnavailableError from error
         except (InvalidIdentifierError, InvalidId, ValueError) as error:
@@ -83,6 +77,14 @@ class PublicProfileLookupService:
 
         if link is None:
             raise PublicProfileNotFoundError
+        if link.status is PublicAccessLinkStatus.PENDING:
+            raise PublicProfilePendingError
+        if link.status is PublicAccessLinkStatus.DISABLED:
+            raise PublicProfileDisabledError
+        if link.status is PublicAccessLinkStatus.REVOKED:
+            raise PublicProfileRevokedError
+        if link.status is PublicAccessLinkStatus.EXPIRED:
+            raise PublicProfileExpiredError
 
         try:
             profile = await self._profile_repository.find_by_id(link.profile_id)

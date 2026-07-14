@@ -11,5 +11,3 @@ class PublicProfileResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     profile: PublicProfileOutput
-
-

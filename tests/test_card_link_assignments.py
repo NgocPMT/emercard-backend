@@ -81,8 +81,8 @@ async def test_repository_attach_link_persists_only_assignment_fields() -> None:
 
     persisted = collection.insert_one.await_args.args[0]
     assert assignment.status is CardLinkAssignmentStatus.ACTIVE
-    assert persisted["card_id"] == str(CARD_ID)
-    assert persisted["public_access_link_id"] == str(LINK_ID)
+    assert persisted["card_id"] == CARD_ID
+    assert persisted["public_access_link_id"] == LINK_ID
     assert persisted["status"] == CardLinkAssignmentStatus.ACTIVE
     assert "public_token" not in persisted
     assert "token_hash" not in persisted

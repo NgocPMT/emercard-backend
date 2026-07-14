@@ -31,6 +31,7 @@ from emercard.modules.public_links.errors import (
     PublicProfileDisabledError,
     PublicProfileError,
     PublicProfileExpiredError,
+    PublicProfilePendingError,
     PublicProfileRevokedError,
 )
 
@@ -81,6 +82,11 @@ def emergency_exception_handler(request: Request, exc: EmergencyLookupError) -> 
 
 def public_profile_exception_handler(request: Request, exc: PublicProfileError) -> JSONResponse:
     mapping: dict[type[PublicProfileError], tuple[int, str, str]] = {
+        PublicProfilePendingError: (
+            409,
+            "public_profile.pending",
+            "Liên kết hồ sơ công khai này đang chờ kích hoạt.",
+        ),
         PublicProfileDisabledError: (
             410,
             "public_profile.disabled",

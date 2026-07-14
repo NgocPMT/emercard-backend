@@ -25,6 +25,7 @@ from emercard.modules.public_links import (
     PublicAccessLinkDocument,
     PublicAccessLinkStatus,
     PublicLinkPurpose,
+    PublicProfileDisabledError,
     PublicProfileLinkResult,
     PublicProfileLinkService,
     PublicProfileLookupService,
@@ -547,7 +548,7 @@ async def test_public_lookup_rejects_disabled_links() -> None:
         InMemoryProfileRepository(ready_profile()),
     )
 
-    with pytest.raises(PublicProfileNotFoundError):
+    with pytest.raises(PublicProfileDisabledError):
         await service.lookup(TOKEN)
 
 
@@ -623,8 +624,8 @@ def test_public_profile_route_returns_disabled_for_disabled_links() -> None:
     with client:
         response = client.get(f"/api/v1/public/{TOKEN}")
 
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "public_profile.not_found"
+    assert response.status_code == 410
+    assert response.json()["error"]["code"] == "public_profile.disabled"
 
 
 def test_public_profile_route_returns_not_ready_for_incomplete_profiles() -> None:
@@ -681,6 +682,7 @@ def test_profile_preview_link_routes_are_removed() -> None:
         ):
             response = client.post(path)
             assert response.status_code == 404
+
 
 @pytest.mark.asyncio
 async def test_public_lookup_reflects_profile_updates_on_the_same_token() -> None:

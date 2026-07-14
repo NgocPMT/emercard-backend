@@ -653,9 +653,11 @@ class CardService:
             return card
         if link.status not in {PublicAccessLinkStatus.PENDING, PublicAccessLinkStatus.DISABLED}:
             raise CardTerminalStateError("card lifecycle transition is not allowed")
+        link_repository = self._public_access_link_repository
+        assert link_repository is not None
 
         async def mutate(session: Any | None = None) -> CardDocument:
-            activated = await self._public_access_link_repository.activate_link(
+            activated = await link_repository.activate_link(
                 link_id=link.id, now=now, session=session
             )
             if activated is None:
@@ -670,9 +672,7 @@ class CardService:
                     raise CardNotFoundError("card does not exist") from error
                 raise CardServiceUnavailableError("card service is unavailable") from error
         try:
-            activated = await self._public_access_link_repository.activate_link(
-                link_id=link.id, now=now
-            )
+            activated = await link_repository.activate_link(link_id=link.id, now=now)
         except (InvalidIdentifierError, RepositoryError, PyMongoError) as error:
             if isinstance(error, InvalidIdentifierError):
                 raise CardNotFoundError("card does not exist") from error
@@ -708,11 +708,11 @@ class CardService:
             raise CardInvalidTransitionError("card lifecycle transition is not allowed")
         if link.status in {PublicAccessLinkStatus.REVOKED, PublicAccessLinkStatus.EXPIRED}:
             raise CardTerminalStateError("card lifecycle transition is not allowed")
+        link_repository = self._public_access_link_repository
+        assert link_repository is not None
 
         async def mutate(session: Any | None = None) -> CardDocument:
-            disabled = await self._public_access_link_repository.disable_link(
-                link_id=link.id, now=now, session=session
-            )
+            disabled = await link_repository.disable_link(link_id=link.id, now=now, session=session)
             if disabled is None:
                 raise CardInvalidTransitionError("card lifecycle transition was not applied")
             return card
@@ -725,9 +725,7 @@ class CardService:
                     raise CardNotFoundError("card does not exist") from error
                 raise CardServiceUnavailableError("card service is unavailable") from error
         try:
-            disabled = await self._public_access_link_repository.disable_link(
-                link_id=link.id, now=now
-            )
+            disabled = await link_repository.disable_link(link_id=link.id, now=now)
         except (InvalidIdentifierError, RepositoryError, PyMongoError) as error:
             if isinstance(error, InvalidIdentifierError):
                 raise CardNotFoundError("card does not exist") from error
@@ -763,7 +761,7 @@ class CardService:
             raise CardLinkAlreadyProvisionedError("card is not available for provisioning")
         assignment_repository = self._card_link_assignment_repository
         link_repository = self._public_access_link_repository
-        if assignment_repository is None or link_repository is None:
+        if assignment_repository is None or link_repository is None or card.owner_id is None:
             public_token = self._token_generator()
             provisioned = await self._repository.provision_link(
                 card_id=card.id,
@@ -787,9 +785,10 @@ class CardService:
             and existing_assignment.status is CardLinkAssignmentStatus.ACTIVE
         ):
             raise CardLinkAlreadyProvisionedError("card link is already provisioned")
+        owner_id = cast(ObjectId | None, card.owner_id)
         profile_id = card.id
-        if card.owner_id is not None:
-            profile_id = (await self._load_ready_profile(card.owner_id)).id
+        if owner_id is not None:
+            profile_id = (await self._load_ready_profile(owner_id)).id
         link, public_token = await self._create_profile_link(
             profile_id=profile_id,
             purpose=PublicLinkPurpose.CARD,
@@ -1371,14 +1370,17 @@ class CardService:
             PublicAccessLinkStatus.EXPIRED: 4,
         }
         ordered_cards = list(cards_by_id.values())
-        return sorted(
-            ordered_cards,
-            key=lambda card: (
-                link_status_order.get(link_status_by_card_id.get(str(card.id)), 99),
+
+        def sort_key(card: CardDocument) -> tuple[int, float, str]:
+            link_status = link_status_by_card_id.get(str(card.id))
+            status_rank = link_status_order[link_status] if link_status is not None else 99
+            return (
+                status_rank,
                 -(card.issued_at.timestamp() if card.issued_at is not None else 0),
                 str(card.id),
-            ),
-        )
+            )
+
+        return sorted(ordered_cards, key=sort_key)
 
     async def get_user_card(
         self, *, card_id: ObjectId | str, user_id: ObjectId | str
@@ -1463,9 +1465,11 @@ class CardService:
             return card
         if link.status not in {PublicAccessLinkStatus.PENDING, PublicAccessLinkStatus.DISABLED}:
             raise CardTerminalStateError("terminal cards cannot change state")
+        link_repository = self._public_access_link_repository
+        assert link_repository is not None
 
         async def mutate(session: Any | None = None) -> CardDocument:
-            activated = await self._public_access_link_repository.activate_link(
+            activated = await link_repository.activate_link(
                 link_id=link.id, now=now, session=session
             )
             if activated is None:
@@ -1475,21 +1479,31 @@ class CardService:
         if hasattr(self._repository, "with_transaction"):
             try:
                 return await self._repository.with_transaction(mutate)
+            except CardInvalidTransitionError:
+                return await self._resolve_user_link_transition_race(
+                    card_id=card.id,
+                    user_id=user_id,
+                    expected_status=PublicAccessLinkStatus.ACTIVE,
+                )
             except (InvalidIdentifierError, RepositoryError, PyMongoError) as error:
                 if isinstance(error, InvalidIdentifierError):
                     raise CardNotFoundError("card does not exist") from error
                 raise CardServiceUnavailableError("card service is unavailable") from error
+        link_repository = self._public_access_link_repository
+        assert link_repository is not None
         try:
-            activated = await self._public_access_link_repository.activate_link(
-                link_id=link.id, now=now
-            )
+            activated = await link_repository.activate_link(link_id=link.id, now=now)
         except (InvalidIdentifierError, RepositoryError, PyMongoError) as error:
             if isinstance(error, InvalidIdentifierError):
                 raise CardNotFoundError("card does not exist") from error
             raise CardServiceUnavailableError("card service is unavailable") from error
         if activated is not None:
             return card
-        raise CardInvalidTransitionError("card lifecycle transition was not applied")
+        return await self._resolve_user_link_transition_race(
+            card_id=card.id,
+            user_id=user_id,
+            expected_status=PublicAccessLinkStatus.ACTIVE,
+        )
 
     async def disable_user_card(
         self,
@@ -1545,11 +1559,11 @@ class CardService:
             raise CardInvalidTransitionError("card lifecycle transition is not allowed")
         if link.status in {PublicAccessLinkStatus.REVOKED, PublicAccessLinkStatus.EXPIRED}:
             raise CardTerminalStateError("terminal cards cannot change state")
+        link_repository = self._public_access_link_repository
+        assert link_repository is not None
 
         async def mutate(session: Any | None = None) -> CardDocument:
-            disabled = await self._public_access_link_repository.disable_link(
-                link_id=link.id, now=now, session=session
-            )
+            disabled = await link_repository.disable_link(link_id=link.id, now=now, session=session)
             if disabled is None:
                 raise CardInvalidTransitionError("card lifecycle transition was not applied")
             return card
@@ -1557,21 +1571,31 @@ class CardService:
         if hasattr(self._repository, "with_transaction"):
             try:
                 return await self._repository.with_transaction(mutate)
+            except CardInvalidTransitionError:
+                return await self._resolve_user_link_transition_race(
+                    card_id=card.id,
+                    user_id=user_id,
+                    expected_status=PublicAccessLinkStatus.DISABLED,
+                )
             except (InvalidIdentifierError, RepositoryError, PyMongoError) as error:
                 if isinstance(error, InvalidIdentifierError):
                     raise CardNotFoundError("card does not exist") from error
                 raise CardServiceUnavailableError("card service is unavailable") from error
+        link_repository = self._public_access_link_repository
+        assert link_repository is not None
         try:
-            disabled = await self._public_access_link_repository.disable_link(
-                link_id=link.id, now=now
-            )
+            disabled = await link_repository.disable_link(link_id=link.id, now=now)
         except (InvalidIdentifierError, RepositoryError, PyMongoError) as error:
             if isinstance(error, InvalidIdentifierError):
                 raise CardNotFoundError("card does not exist") from error
             raise CardServiceUnavailableError("card service is unavailable") from error
         if disabled is not None:
             return card
-        raise CardInvalidTransitionError("card lifecycle transition was not applied")
+        return await self._resolve_user_link_transition_race(
+            card_id=card.id,
+            user_id=user_id,
+            expected_status=PublicAccessLinkStatus.DISABLED,
+        )
 
     async def _load_user_action_card(
         self,
@@ -1706,6 +1730,26 @@ class CardService:
         profile = await self._load_user_profile(user_id)
         if profile_state(profile) != "ready_to_publish":
             raise CardProfileNotReadyError("profile is not ready for card activation")
+
+    async def _resolve_user_link_transition_race(
+        self,
+        *,
+        card_id: ObjectId,
+        user_id: ObjectId | str,
+        expected_status: PublicAccessLinkStatus,
+    ) -> CardDocument:
+        card = await self._load_user_action_card(card_id=card_id, user_id=user_id)
+        assignment = await self._load_card_assignment(card.id, allow_disabled=True)
+        if assignment is None:
+            raise CardNotFoundError("card does not exist")
+        link = await self._load_public_link(assignment.public_access_link_id)
+        if link is None:
+            raise CardNotFoundError("card does not exist")
+        if link.status is expected_status:
+            return card
+        if link.status in {PublicAccessLinkStatus.REVOKED, PublicAccessLinkStatus.EXPIRED}:
+            raise CardTerminalStateError("card lifecycle transition is not allowed")
+        raise CardInvalidTransitionError("card lifecycle transition was not applied")
 
     async def _resolve_user_transition_race(
         self,

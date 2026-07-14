@@ -132,9 +132,7 @@ class PublicAccessLinkRepository:
             }
         )
         try:
-            await self._collection.insert_one(
-                document.model_dump(by_alias=True, mode="python"), **_session_kwargs(session)
-            )
+            await self._collection.insert_one(_persisted(document), **_session_kwargs(session))
         except DuplicateKeyError as error:
             raise RepositoryConflictError("public profile link creation conflict") from error
         return document
@@ -198,16 +196,25 @@ class PublicAccessLinkRepository:
         }:
             return None
         document = await self._collection.find_one_and_update(
-            _identifier_query("_id", identifier),
+            {
+                "$and": [
+                    _identifier_query("_id", identifier),
+                    {
+                        "status": {
+                            "$in": [
+                                PublicAccessLinkStatus.PENDING,
+                                PublicAccessLinkStatus.DISABLED,
+                            ]
+                        }
+                    },
+                ]
+            },
             {
                 "$set": {
                     "status": PublicAccessLinkStatus.ACTIVE,
                     "updated_at": timestamp,
                     "activated_at": timestamp,
                     "disabled_at": None,
-                    "revoked_at": None,
-                    "expires_at": None,
-                    "expired_at": None,
                 }
             },
             return_document=ReturnDocument.AFTER,
@@ -232,7 +239,12 @@ class PublicAccessLinkRepository:
         if current.status is not PublicAccessLinkStatus.ACTIVE:
             return None
         document = await self._collection.find_one_and_update(
-            _identifier_query("_id", identifier),
+            {
+                "$and": [
+                    _identifier_query("_id", identifier),
+                    {"status": PublicAccessLinkStatus.ACTIVE},
+                ]
+            },
             {
                 "$set": {
                     "status": PublicAccessLinkStatus.DISABLED,
@@ -266,7 +278,20 @@ class PublicAccessLinkRepository:
         }:
             return None
         document = await self._collection.find_one_and_update(
-            _identifier_query("_id", identifier),
+            {
+                "$and": [
+                    _identifier_query("_id", identifier),
+                    {
+                        "status": {
+                            "$in": [
+                                PublicAccessLinkStatus.PENDING,
+                                PublicAccessLinkStatus.ACTIVE,
+                                PublicAccessLinkStatus.DISABLED,
+                            ]
+                        }
+                    },
+                ]
+            },
             {
                 "$set": {
                     "status": PublicAccessLinkStatus.REVOKED,
@@ -390,6 +415,14 @@ def _optional_object_id(value: ObjectId | str | None) -> ObjectId | None:
     if value is None:
         return None
     return _object_id(value)
+
+
+def _persisted(document: PublicAccessLinkDocument) -> dict[str, Any]:
+    persisted = document.model_dump(mode="python", by_alias=True)
+    for field in ("_id", "profile_id", "created_by"):
+        value = getattr(document, field.removeprefix("_") if field == "_id" else field)
+        persisted[field] = value
+    return persisted
 
 
 def _session_kwargs(session: Any | None) -> dict[str, Any]:

@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
@@ -375,12 +376,23 @@ class PublicAccessLinkRepository:
         now: datetime | None = None,
         session: object | None = None,
     ) -> PublicAccessLinkDocument | None:
-        del now, session
+        del session
         link = self.links.get(ObjectId(link_id))
-        if link is None or link.status is not PublicAccessLinkStatus.DISABLED:
+        if link is None:
+            return None
+        if link.status is PublicAccessLinkStatus.ACTIVE:
+            return link
+        if link.status not in {
+            PublicAccessLinkStatus.PENDING,
+            PublicAccessLinkStatus.DISABLED,
+        }:
             return None
         updated = link.model_copy(
-            update={"status": PublicAccessLinkStatus.ACTIVE, "disabled_at": None}
+            update={
+                "status": PublicAccessLinkStatus.ACTIVE,
+                "activated_at": now or NOW,
+                "disabled_at": None,
+            }
         )
         self.links[updated.id] = updated
         return updated
@@ -639,6 +651,55 @@ def settings() -> Settings:
         auth_secret=SecretStr("test-auth-secret-012345678901234567890"),
         cors_origins=["http://localhost:4321"],
     )
+
+
+def linked_card_service(
+    *,
+    link_status: PublicAccessLinkStatus = PublicAccessLinkStatus.PENDING,
+) -> tuple[
+    CardService,
+    CardDocument,
+    PublicAccessLinkRepository,
+    CardLinkAssignmentRepository,
+]:
+    linked_profile = profile(ready=True)
+    linked_card = card(status=CardStatus.ACTIVE)
+    link = PublicAccessLinkDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "profile_id": linked_profile.id,
+            "purpose": PublicLinkPurpose.CARD,
+            "label": "Card access",
+            "token_hash": hash_public_token(generate_public_token()),
+            "status": link_status,
+            "created_at": NOW,
+            "updated_at": NOW,
+            "activated_at": NOW if link_status is PublicAccessLinkStatus.ACTIVE else None,
+            "disabled_at": NOW if link_status is PublicAccessLinkStatus.DISABLED else None,
+            "revoked_at": NOW if link_status is PublicAccessLinkStatus.REVOKED else None,
+        }
+    )
+    assignment = CardLinkAssignmentDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "card_id": linked_card.id,
+            "public_access_link_id": link.id,
+            "status": CardLinkAssignmentStatus.ACTIVE,
+            "attached_at": NOW,
+            "updated_at": NOW,
+            "attached_by_admin_id": ADMIN_ID,
+        }
+    )
+    links = PublicAccessLinkRepository([link])
+    assignments = CardLinkAssignmentRepository([assignment])
+    service = CardService(
+        CardRepository([linked_card]),
+        UserRepository(user()),
+        profile_repository=ProfileRepository(linked_profile),
+        public_access_link_repository=links,
+        card_link_assignment_repository=assignments,
+    )
+    return service, linked_card, links, assignments
 
 
 @pytest.mark.asyncio
@@ -1242,6 +1303,113 @@ async def test_user_card_service_restores_and_revokes_link_state_with_card_actio
         is CardLinkAssignmentStatus.ACTIVE
     )
     assert disabled.status is CardStatus.DISABLED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status",
+    [
+        PublicAccessLinkStatus.PENDING,
+        PublicAccessLinkStatus.ACTIVE,
+        PublicAccessLinkStatus.DISABLED,
+    ],
+)
+async def test_admin_revocation_is_terminal_from_every_mutable_link_state(
+    status: PublicAccessLinkStatus,
+) -> None:
+    service, linked_card, links, assignments = linked_card_service(link_status=status)
+
+    await service.revoke_card_link(card_id=linked_card.id, admin_id=ADMIN_ID, now=NOW)
+
+    link = next(iter(links.links.values()))
+    assignment = next(iter(assignments.assignments.values()))
+    assert link.status is PublicAccessLinkStatus.REVOKED
+    assert assignment.status is CardLinkAssignmentStatus.DETACHED
+
+
+@pytest.mark.asyncio
+async def test_revoked_lost_and_detached_cards_reject_later_activation() -> None:
+    revoked_service, revoked_card, _, _ = linked_card_service(
+        link_status=PublicAccessLinkStatus.REVOKED
+    )
+    with pytest.raises(CardTerminalStateError):
+        await revoked_service.activate_user_card(card_id=revoked_card.id, user_id=OWNER_ID)
+
+    lost_service, lost_card, lost_links, _ = linked_card_service(
+        link_status=PublicAccessLinkStatus.ACTIVE
+    )
+    await lost_service.mark_lost(card_id=lost_card.id, now=NOW)
+    assert next(iter(lost_links.links.values())).status is PublicAccessLinkStatus.REVOKED
+    with pytest.raises(CardNotFoundError):
+        await lost_service.activate_user_card(card_id=lost_card.id, user_id=OWNER_ID)
+
+    detached_service, detached_card, _, _ = linked_card_service(
+        link_status=PublicAccessLinkStatus.ACTIVE
+    )
+    await detached_service.detach_card_link(card_id=detached_card.id, admin_id=ADMIN_ID, now=NOW)
+    with pytest.raises(CardNotFoundError):
+        await detached_service.activate_user_card(card_id=detached_card.id, user_id=OWNER_ID)
+
+
+@pytest.mark.asyncio
+async def test_link_lifecycle_races_are_idempotent_and_terminal_changes_win() -> None:
+    service, linked_card, links, _ = linked_card_service(link_status=PublicAccessLinkStatus.PENDING)
+    await asyncio.gather(
+        *[service.activate_user_card(card_id=linked_card.id, user_id=OWNER_ID) for _ in range(2)]
+    )
+    assert next(iter(links.links.values())).status is PublicAccessLinkStatus.ACTIVE
+
+    await asyncio.gather(
+        *[service.disable_user_card(card_id=linked_card.id, user_id=OWNER_ID) for _ in range(2)]
+    )
+    assert next(iter(links.links.values())).status is PublicAccessLinkStatus.DISABLED
+
+    await asyncio.gather(
+        service.activate_user_card(card_id=linked_card.id, user_id=OWNER_ID),
+        service.disable_user_card(card_id=linked_card.id, user_id=OWNER_ID),
+    )
+    assert next(iter(links.links.values())).status is PublicAccessLinkStatus.DISABLED
+
+    await asyncio.gather(
+        service.activate_user_card(card_id=linked_card.id, user_id=OWNER_ID),
+        service.revoke_card_link(card_id=linked_card.id, admin_id=ADMIN_ID, now=NOW),
+    )
+    assert next(iter(links.links.values())).status is PublicAccessLinkStatus.REVOKED
+    with pytest.raises(CardNotFoundError):
+        await service.activate_user_card(card_id=linked_card.id, user_id=OWNER_ID)
+
+    detach_service, detach_card, detach_links, _ = linked_card_service(
+        link_status=PublicAccessLinkStatus.DISABLED
+    )
+    await asyncio.gather(
+        detach_service.activate_user_card(card_id=detach_card.id, user_id=OWNER_ID),
+        detach_service.detach_card_link(card_id=detach_card.id, admin_id=ADMIN_ID, now=NOW),
+    )
+    assert next(iter(detach_links.links.values())).status is PublicAccessLinkStatus.REVOKED
+
+    lost_service, lost_card, lost_links, _ = linked_card_service(
+        link_status=PublicAccessLinkStatus.DISABLED
+    )
+    await asyncio.gather(
+        lost_service.activate_user_card(card_id=lost_card.id, user_id=OWNER_ID),
+        lost_service.mark_lost(card_id=lost_card.id, now=NOW),
+    )
+    assert next(iter(lost_links.links.values())).status is PublicAccessLinkStatus.REVOKED
+
+
+@pytest.mark.asyncio
+async def test_disabling_or_revoking_card_a_does_not_change_card_b() -> None:
+    service_a, card_a, links_a, _ = linked_card_service(link_status=PublicAccessLinkStatus.ACTIVE)
+    _, card_b, links_b, _ = linked_card_service(link_status=PublicAccessLinkStatus.ACTIVE)
+
+    await service_a.disable_user_card(card_id=card_a.id, user_id=OWNER_ID, now=NOW)
+    assert next(iter(links_a.links.values())).status is PublicAccessLinkStatus.DISABLED
+    assert next(iter(links_b.links.values())).status is PublicAccessLinkStatus.ACTIVE
+
+    await service_a.revoke_card_link(card_id=card_a.id, admin_id=ADMIN_ID, now=NOW)
+    assert next(iter(links_a.links.values())).status is PublicAccessLinkStatus.REVOKED
+    assert next(iter(links_b.links.values())).status is PublicAccessLinkStatus.ACTIVE
+    assert card_b.id != card_a.id
 
 
 def test_user_card_routes_are_authenticated_and_safe() -> None:

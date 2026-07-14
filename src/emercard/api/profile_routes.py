@@ -58,5 +58,3 @@ async def get_profile_service(request: Request) -> ProfileService:
 
     repository = await get_profile_repository(request)
     return ProfileService(repository)
-
-

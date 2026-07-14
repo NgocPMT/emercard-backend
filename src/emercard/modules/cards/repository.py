@@ -9,7 +9,7 @@ from typing import Any, cast
 from bson.errors import InvalidId
 from bson.objectid import ObjectId
 from pymongo import ASCENDING, ReturnDocument
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, OperationFailure
 
 from emercard.core.config import Settings
 from emercard.core.types import utc_now
@@ -748,11 +748,19 @@ class CardRepository:
         return _card(document)
 
     async def with_transaction(self, operation: Callable[[Any], Awaitable[Any]]) -> Any:
-        """Run a repository operation in a MongoDB transaction."""
+        """Run a repository operation in a MongoDB transaction when available."""
 
         client = self._database.client
-        async with client.start_session() as session, await session.start_transaction():
-            return await operation(session)
+        try:
+            async with client.start_session() as session, await session.start_transaction():
+                return await operation(session)
+        except OperationFailure as error:
+            transaction_error = (
+                "Transaction numbers are only allowed on a replica set member or mongos"
+            )
+            if transaction_error not in str(error):
+                raise
+        return await operation(None)
 
 
 def _identity_conflict(error: DuplicateKeyError) -> CardError:

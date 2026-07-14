@@ -195,13 +195,11 @@ def to_user_card(
         card.is_current
         and card.status not in terminal_statuses
         and card.encoding_verified_at is not None
-        and issued_at is not None
         and link_status in {PublicAccessLinkStatus.PENDING, PublicAccessLinkStatus.DISABLED}
     )
     can_disable = (
         card.is_current
         and card.status not in terminal_statuses
-        and issued_at is not None
         and card.encoding_verified_at is not None
         and link_status is PublicAccessLinkStatus.ACTIVE
     )
@@ -213,8 +211,6 @@ def to_user_card(
     blocking_reason: str | None = None
     if card.status in terminal_statuses:
         blocking_reason = "card_terminal"
-    elif issued_at is None:
-        blocking_reason = "card_not_issued"
     elif card.encoding_verified_at is None:
         blocking_reason = "card_encoding_not_verified"
     elif link is None:

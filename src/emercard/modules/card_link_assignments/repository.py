@@ -9,7 +9,7 @@ from typing import Any
 from bson.errors import InvalidId
 from bson.objectid import ObjectId
 from pymongo import DESCENDING, ReturnDocument
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, OperationFailure
 
 from emercard.core.config import Settings
 from emercard.core.types import utc_now
@@ -214,8 +214,16 @@ class CardLinkAssignmentRepository:
 
     async def with_transaction(self, operation: Callable[[Any], Awaitable[Any]]) -> Any:
         client = self._database.client
-        async with client.start_session() as session, session.start_transaction():
-            return await operation(session)
+        try:
+            async with client.start_session() as session, session.start_transaction():
+                return await operation(session)
+        except OperationFailure as error:
+            transaction_error = (
+                "Transaction numbers are only allowed on a replica set member or mongos"
+            )
+            if transaction_error not in str(error):
+                raise
+        return await operation(None)
 
 
 def _assignment(document: Any) -> CardLinkAssignmentDocument | None:
@@ -242,7 +250,18 @@ def _optional_object_id(value: ObjectId | str | None) -> ObjectId | None:
 
 
 def _persisted(document: CardLinkAssignmentDocument) -> dict[str, Any]:
-    return document.model_dump(mode="python", by_alias=True)
+    persisted = document.model_dump(mode="python", by_alias=True)
+    for field in (
+        "_id",
+        "card_id",
+        "public_access_link_id",
+        "attached_by_admin_id",
+        "disabled_by_admin_id",
+        "detached_by_admin_id",
+    ):
+        value = getattr(document, field.removeprefix("_") if field == "_id" else field)
+        persisted[field] = value
+    return persisted
 
 
 def _session_kwargs(session: Any | None) -> dict[str, Any]:

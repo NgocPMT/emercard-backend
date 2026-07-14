@@ -13,6 +13,14 @@ class PublicProfileNotFoundError(PublicProfileError):
     """The token did not resolve to any public profile link."""
 
 
+class PublicProfilePendingError(PublicProfileError):
+    """The token resolved to a pending public profile link."""
+
+    status_code = 409
+    code = "public_profile.pending"
+    message = "Liên kết hồ sơ công khai này đang chờ kích hoạt."
+
+
 class PublicProfileDisabledError(PublicProfileError):
     """The token resolved to a disabled public profile link."""
 

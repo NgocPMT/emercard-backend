@@ -6,6 +6,7 @@ from emercard.modules.public_links.errors import (
     PublicProfileExpiredError,
     PublicProfileNotFoundError,
     PublicProfileNotReadyError,
+    PublicProfilePendingError,
     PublicProfileRevokedError,
     PublicProfileServiceUnavailableError,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "PublicProfileError",
     "PublicProfileExpiredError",
     "PublicProfileLinkResult",
+    "PublicProfilePendingError",
     "PublicProfileLookupResult",
     "PublicProfileLinkService",
     "PublicProfileLookupService",

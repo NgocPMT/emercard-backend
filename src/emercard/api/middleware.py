@@ -25,6 +25,33 @@ _LOOKUP_HEADERS = {
 }
 
 
+class UvicornAccessLogRedactionFilter(logging.Filter):
+    """Redact bearer-token request paths from Uvicorn access logs."""
+
+    def __init__(self, api_prefix: str) -> None:
+        super().__init__()
+        prefix = api_prefix.rstrip("/")
+        self._route_templates = {
+            f"{prefix}/public/": f"{prefix}/public/{{token}}",
+            f"{prefix}/emergency/": f"{prefix}/emergency/{{token}}",
+        }
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name != "uvicorn.access":
+            return True
+        args = record.args
+        if not isinstance(args, tuple) or len(args) < 5:
+            return True
+        path = args[2]
+        if not isinstance(path, str):
+            return True
+        redacted_path = _redact_access_path(path, self._route_templates)
+        if redacted_path == path:
+            return True
+        record.args = (args[0], args[1], redacted_path, args[3], args[4], *args[5:])
+        return True
+
+
 class EmergencyRateLimiter:
     """Small in-process sliding-window limiter for anonymous emergency requests."""
 
@@ -137,6 +164,27 @@ async def request_context_middleware(
     )
     response.headers["X-Request-ID"] = request_id
     return response
+
+
+def install_uvicorn_access_log_redaction(api_prefix: str) -> None:
+    """Attach bearer-token path redaction to the Uvicorn access logger."""
+
+    access_logger = logging.getLogger("uvicorn.access")
+    if any(
+        isinstance(filter_, UvicornAccessLogRedactionFilter) for filter_ in access_logger.filters
+    ):
+        return
+    access_logger.addFilter(UvicornAccessLogRedactionFilter(api_prefix))
+
+
+def _redact_access_path(path: str, route_templates: dict[str, str]) -> str:
+    for prefix, template in route_templates.items():
+        if not path.startswith(prefix):
+            continue
+        remainder = path[len(prefix) :].rstrip("/")
+        if remainder and "/" not in remainder and "?" not in remainder and "#" not in remainder:
+            return template
+    return path
 
 
 def _lookup_outcome(status_code: int) -> str:

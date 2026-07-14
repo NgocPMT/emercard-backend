@@ -20,7 +20,11 @@ from emercard.api.errors import (
     unhandled_exception_handler,
     validation_exception_handler,
 )
-from emercard.api.middleware import EmergencyRateLimiter, request_context_middleware
+from emercard.api.middleware import (
+    EmergencyRateLimiter,
+    install_uvicorn_access_log_redaction,
+    request_context_middleware,
+)
 from emercard.api.routes import build_api_router, build_infrastructure_router
 from emercard.core.config import Settings, get_settings
 from emercard.db import Database, initialize_indexes
@@ -58,6 +62,7 @@ def create_app(
 ) -> FastAPI:
     app_settings = settings or get_settings()
     logging.getLogger("emercard.request").setLevel(app_settings.log_level)
+    install_uvicorn_access_log_redaction(app_settings.api_prefix)
     app = FastAPI(
         title=app_settings.app_name,
         version="0.1.0",

@@ -11,6 +11,7 @@ from pymongo.errors import PyMongoError
 from emercard.db.repositories import InvalidIdentifierError, RepositoryError
 from emercard.modules.card_link_assignments.models import CardLinkAssignmentDocument
 from emercard.modules.cards.identity import hash_public_token
+from emercard.modules.cards.models import CardDocument
 from emercard.modules.emergency.errors import (
     EmergencyProfileNotFoundError,
     EmergencyProfileServiceUnavailableError,
@@ -48,7 +49,7 @@ class CardLinkAssignmentRepositoryProtocol(Protocol):
 class LegacyCardTokenRepositoryProtocol(Protocol):
     async def find_publicly_resolvable_by_token_hash(
         self, token_hash: str, *, session: object | None = None
-    ) -> object | None: ...
+    ) -> CardDocument | None: ...
 
 
 class EmergencyLookupService:
@@ -134,20 +135,14 @@ class EmergencyLookupService:
             card_id=card_id,
         )
 
-    async def _lookup_legacy_card(self, card: object) -> PublicProfileLookupResult:
-        owner_id = getattr(card, "owner_id", None)
-        if owner_id is None:
+    async def _lookup_legacy_card(self, card: CardDocument) -> PublicProfileLookupResult:
+        if card.owner_id is None:
             raise EmergencyProfileNotFoundError
-
-        status = getattr(card, "status", None)
-        is_current = getattr(card, "is_current", False)
-        issued_at = getattr(card, "issued_at", None)
-        encoding_verified_at = getattr(card, "encoding_verified_at", None)
-        if status is None or not is_current or issued_at is None or encoding_verified_at is None:
+        if not card.is_current or card.issued_at is None or card.encoding_verified_at is None:
             raise EmergencyProfileNotFoundError
 
         try:
-            profile = await self._profile_repository.find_by_user_id(owner_id)
+            profile = await self._profile_repository.find_by_user_id(card.owner_id)
         except (InvalidIdentifierError, RepositoryError, PyMongoError, ValueError) as error:
             raise EmergencyProfileServiceUnavailableError from error
 
