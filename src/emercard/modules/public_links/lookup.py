@@ -12,17 +12,9 @@ from pymongo.errors import PyMongoError
 from emercard.db.repositories import InvalidIdentifierError, RepositoryError
 from emercard.modules.card_link_assignments.models import CardLinkAssignmentDocument
 from emercard.modules.cards.identity import hash_public_token
-from emercard.modules.profiles.models import (
-    ProfileDocument,
-    profile_readiness,
-    to_public_profile,
-)
+from emercard.modules.profiles.models import ProfileDocument, to_public_profile
 from emercard.modules.public_links.errors import (
-    PublicProfileDisabledError,
-    PublicProfileExpiredError,
     PublicProfileNotFoundError,
-    PublicProfileNotReadyError,
-    PublicProfileRevokedError,
     PublicProfileServiceUnavailableError,
 )
 from emercard.modules.public_links.models import (
@@ -36,6 +28,10 @@ _TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class PublicAccessLinkRepositoryProtocol(Protocol):
+    async def find_active_by_token_hash(
+        self, token_hash: str, *, session: object | None = None
+    ) -> PublicAccessLinkDocument | None: ...
+
     async def find_by_token_hash(
         self, token_hash: str, *, session: object | None = None
     ) -> PublicAccessLinkDocument | None: ...
@@ -72,7 +68,14 @@ class PublicProfileLookupService:
             raise PublicProfileNotFoundError
 
         try:
-            link = await self._link_repository.find_by_token_hash(hash_public_token(raw_token))
+            token_hash = hash_public_token(raw_token)
+            find_active = getattr(self._link_repository, "find_active_by_token_hash", None)
+            if callable(find_active):
+                link = await find_active(token_hash)
+            else:
+                link = await self._link_repository.find_by_token_hash(token_hash)
+                if link is not None and link.status is not PublicAccessLinkStatus.ACTIVE:
+                    link = None
         except (RepositoryError, PyMongoError) as error:
             raise PublicProfileServiceUnavailableError from error
         except (InvalidIdentifierError, InvalidId, ValueError) as error:
@@ -80,14 +83,6 @@ class PublicProfileLookupService:
 
         if link is None:
             raise PublicProfileNotFoundError
-        if link.status is PublicAccessLinkStatus.DISABLED:
-            raise PublicProfileDisabledError
-        if link.status is PublicAccessLinkStatus.REVOKED:
-            raise PublicProfileRevokedError
-        if link.status is PublicAccessLinkStatus.EXPIRED:
-            raise PublicProfileExpiredError
-        if link.status is PublicAccessLinkStatus.PENDING:
-            raise PublicProfileNotReadyError
 
         try:
             profile = await self._profile_repository.find_by_id(link.profile_id)
@@ -96,13 +91,13 @@ class PublicProfileLookupService:
         except (InvalidIdentifierError, InvalidId, ValueError) as error:
             raise PublicProfileNotFoundError from error
 
-        if profile is None or profile_readiness(profile).status != "ready":
-            raise PublicProfileNotReadyError
+        if profile is None:
+            raise PublicProfileNotFoundError
 
         try:
             public_profile = to_public_profile(profile)
         except ValueError as error:
-            raise PublicProfileNotReadyError from error
+            raise PublicProfileNotFoundError from error
 
         assignment_id = None
         card_id = None

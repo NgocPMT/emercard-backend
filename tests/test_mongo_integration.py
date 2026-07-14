@@ -44,7 +44,6 @@ from emercard.modules.emergency.errors import EmergencyProfileNotFoundError
 from emercard.modules.profiles import ProfileRepository, ProfileUpsertInput
 from emercard.modules.public_links import (
     PublicAccessLinkRepository,
-    PublicProfileDisabledError,
     PublicProfileLinkService,
     PublicProfileLookupService,
     PublicProfileNotFoundError,
@@ -652,7 +651,7 @@ async def test_real_mongo_public_profile_links_lifecycle_and_index(mongo_context
 
     disabled = await service.disable(profile_id=profile.id)
     assert disabled.status == "disabled"
-    with pytest.raises(PublicProfileDisabledError):
+    with pytest.raises(PublicProfileNotFoundError):
         await lookup.lookup(regenerated.raw_token)
 
     index_info = await database[settings.mongodb_public_access_links_collection].index_information()

@@ -25,7 +25,6 @@ from emercard.modules.public_links import (
     PublicAccessLinkDocument,
     PublicAccessLinkStatus,
     PublicLinkPurpose,
-    PublicProfileDisabledError,
     PublicProfileLinkResult,
     PublicProfileLinkService,
     PublicProfileLookupService,
@@ -197,6 +196,14 @@ class InMemoryLinkRepository:
         for link in self.links:
             if link.token_hash == token_hash:
                 return link
+        return None
+
+    async def find_active_by_token_hash(
+        self, token_hash: str, *, session: object | None = None
+    ) -> PublicAccessLinkDocument | None:
+        link = await self.find_by_token_hash(token_hash, session=session)
+        if link is not None and link.status is PublicAccessLinkStatus.ACTIVE:
+            return link
         return None
 
     async def create_link(
@@ -540,19 +547,21 @@ async def test_public_lookup_rejects_disabled_links() -> None:
         InMemoryProfileRepository(ready_profile()),
     )
 
-    with pytest.raises(PublicProfileDisabledError):
+    with pytest.raises(PublicProfileNotFoundError):
         await service.lookup(TOKEN)
 
 
 @pytest.mark.asyncio
-async def test_public_lookup_rejects_not_ready_profiles() -> None:
+async def test_public_lookup_returns_profiles_even_when_incomplete() -> None:
     service = PublicProfileLookupService(
         InMemoryLinkRepository(link_document(token_hash=hash_public_token(TOKEN))),
         InMemoryProfileRepository(incomplete_profile()),
     )
 
-    with pytest.raises(PublicProfileNotReadyError):
-        await service.lookup(TOKEN)
+    result = await service.lookup(TOKEN)
+
+    assert result.display_name == "Alex Example"
+    assert result.blood_type is None
 
 
 @pytest.mark.asyncio
@@ -614,8 +623,8 @@ def test_public_profile_route_returns_disabled_for_disabled_links() -> None:
     with client:
         response = client.get(f"/api/v1/public/{TOKEN}")
 
-    assert response.status_code == 410
-    assert response.json()["error"]["code"] == "public_profile.disabled"
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "public_profile.not_found"
 
 
 def test_public_profile_route_returns_not_ready_for_incomplete_profiles() -> None:
@@ -625,8 +634,8 @@ def test_public_profile_route_returns_not_ready_for_incomplete_profiles() -> Non
     with client:
         response = client.get(f"/api/v1/public/{TOKEN}")
 
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "public_profile.not_ready"
+    assert response.status_code == 200
+    assert response.json()["profile"]["display_name"] == "Alex Example"
 
 
 def test_public_profile_route_returns_safe_503_on_dependency_failure() -> None:

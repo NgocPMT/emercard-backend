@@ -187,6 +187,16 @@ class PublicAccessLinkRepository:
     ) -> PublicAccessLinkDocument | None:
         timestamp = now or utc_now()
         identifier = _object_id(link_id)
+        current = await self.find_by_id(identifier, session=session)
+        if current is None:
+            return None
+        if current.status is PublicAccessLinkStatus.ACTIVE:
+            return current
+        if current.status not in {
+            PublicAccessLinkStatus.PENDING,
+            PublicAccessLinkStatus.DISABLED,
+        }:
+            return None
         document = await self._collection.find_one_and_update(
             _identifier_query("_id", identifier),
             {
@@ -214,6 +224,13 @@ class PublicAccessLinkRepository:
     ) -> PublicAccessLinkDocument | None:
         timestamp = now or utc_now()
         identifier = _object_id(link_id)
+        current = await self.find_by_id(identifier, session=session)
+        if current is None:
+            return None
+        if current.status is PublicAccessLinkStatus.DISABLED:
+            return current
+        if current.status is not PublicAccessLinkStatus.ACTIVE:
+            return None
         document = await self._collection.find_one_and_update(
             _identifier_query("_id", identifier),
             {
@@ -237,6 +254,17 @@ class PublicAccessLinkRepository:
     ) -> PublicAccessLinkDocument | None:
         timestamp = now or utc_now()
         identifier = _object_id(link_id)
+        current = await self.find_by_id(identifier, session=session)
+        if current is None:
+            return None
+        if current.status is PublicAccessLinkStatus.REVOKED:
+            return current
+        if current.status not in {
+            PublicAccessLinkStatus.PENDING,
+            PublicAccessLinkStatus.ACTIVE,
+            PublicAccessLinkStatus.DISABLED,
+        }:
+            return None
         document = await self._collection.find_one_and_update(
             _identifier_query("_id", identifier),
             {

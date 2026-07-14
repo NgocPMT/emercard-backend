@@ -339,6 +339,24 @@ def build_admin_card_router() -> APIRouter:
         )
         return await _admin_card_output(service, card_id)
 
+    @router.post("/cards/{card_id}/link/activate", response_model=AdminCardOutput)
+    async def activate_card_link(  # pyright: ignore[reportUnusedFunction]
+        card_id: str,
+        current_admin: CurrentUserOutput = Depends(require_admin),  # noqa: B008
+        service: CardService = Depends(get_card_service),  # noqa: B008
+    ) -> AdminCardOutput:
+        await service.activate_card_link(card_id=card_id, admin_id=current_admin.id)
+        return await _admin_card_output(service, card_id)
+
+    @router.post("/cards/{card_id}/link/disable", response_model=AdminCardOutput)
+    async def disable_card_link(  # pyright: ignore[reportUnusedFunction]
+        card_id: str,
+        current_admin: CurrentUserOutput = Depends(require_admin),  # noqa: B008
+        service: CardService = Depends(get_card_service),  # noqa: B008
+    ) -> AdminCardOutput:
+        await service.disable_card_link(card_id=card_id, admin_id=current_admin.id)
+        return await _admin_card_output(service, card_id)
+
     @router.post("/cards/{card_id}/link/revoke", response_model=AdminCardOutput)
     async def revoke_card_link(  # pyright: ignore[reportUnusedFunction]
         card_id: str,

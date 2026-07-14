@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Mapping
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 

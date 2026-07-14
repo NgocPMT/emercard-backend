@@ -75,7 +75,9 @@ class EmergencyLookupService:
 
         token_hash = hash_public_token(raw_token)
 
-        legacy_resolver = getattr(self._link_repository, "find_publicly_resolvable_by_token_hash", None)
+        legacy_resolver = getattr(
+            self._link_repository, "find_publicly_resolvable_by_token_hash", None
+        )
         if callable(legacy_resolver):
             try:
                 legacy_card = await cast(
@@ -145,13 +147,7 @@ class EmergencyLookupService:
             raise EmergencyProfileNotFoundError
 
         try:
-            profile_lookup = getattr(self._profile_repository, "find_by_user_id")
-            profile = await profile_lookup(owner_id)
-        except AttributeError:
-            try:
-                profile = await self._profile_repository.find_by_id(owner_id)
-            except (InvalidIdentifierError, RepositoryError, PyMongoError, ValueError) as error:
-                raise EmergencyProfileServiceUnavailableError from error
+            profile = await self._profile_repository.find_by_user_id(owner_id)
         except (InvalidIdentifierError, RepositoryError, PyMongoError, ValueError) as error:
             raise EmergencyProfileServiceUnavailableError from error
 
@@ -164,10 +160,10 @@ class EmergencyLookupService:
 
         return PublicProfileLookupResult(
             profile=public_profile,
-            link_id=str(getattr(card, "id")),
+            link_id=str(card.id),
             purpose=PublicLinkPurpose.CARD,
             assignment_id=None,
-            card_id=str(getattr(card, "id")),
+            card_id=str(card.id),
         )
 
     def _valid_token_shape(self, raw_token: str) -> bool:

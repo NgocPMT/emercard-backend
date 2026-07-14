@@ -148,6 +148,8 @@ class UserCardOutput(CardSchema):
     updated_at: UtcDateTime
     can_activate: bool
     can_disable: bool
+    can_report_lost: bool
+    blocking_reason: str | None = None
     link_status: PublicAccessLinkStatus | None = None
     link_purpose: PublicLinkPurpose | None = None
     link_label: str | None = None
@@ -186,6 +188,44 @@ def to_user_card(
     issued_at = card.issued_at
     if issued_at is None:
         raise ValueError("user card output requires an issued card")
+
+    terminal_statuses = {CardStatus.LOST, CardStatus.REPLACED, CardStatus.VOID}
+    link_status = link.status if link is not None else None
+    can_activate = (
+        card.is_current
+        and card.status not in terminal_statuses
+        and card.encoding_verified_at is not None
+        and issued_at is not None
+        and link_status in {PublicAccessLinkStatus.PENDING, PublicAccessLinkStatus.DISABLED}
+    )
+    can_disable = (
+        card.is_current
+        and card.status not in terminal_statuses
+        and issued_at is not None
+        and card.encoding_verified_at is not None
+        and link_status is PublicAccessLinkStatus.ACTIVE
+    )
+    can_report_lost = card.is_current and card.status in {
+        CardStatus.ASSIGNED,
+        CardStatus.ACTIVE,
+        CardStatus.DISABLED,
+    }
+    blocking_reason: str | None = None
+    if card.status in terminal_statuses:
+        blocking_reason = "card_terminal"
+    elif issued_at is None:
+        blocking_reason = "card_not_issued"
+    elif card.encoding_verified_at is None:
+        blocking_reason = "card_encoding_not_verified"
+    elif link is None:
+        blocking_reason = "link_not_assigned"
+    elif link.status is PublicAccessLinkStatus.REVOKED:
+        blocking_reason = "link_revoked"
+    elif link.status is PublicAccessLinkStatus.EXPIRED:
+        blocking_reason = "link_expired"
+    elif not card.is_current:
+        blocking_reason = "card_not_current"
+
     return UserCardOutput(
         id=str(card.id),
         serial=card.serial,
@@ -196,9 +236,11 @@ def to_user_card(
         disabled_at=card.disabled_at,
         created_at=card.created_at,
         updated_at=card.updated_at,
-        can_activate=card.status in {CardStatus.ASSIGNED, CardStatus.DISABLED},
-        can_disable=card.status is CardStatus.ACTIVE,
-        link_status=link.status if link is not None else None,
+        can_activate=can_activate,
+        can_disable=can_disable,
+        can_report_lost=can_report_lost,
+        blocking_reason=blocking_reason,
+        link_status=link_status,
         link_purpose=link.purpose if link is not None else None,
         link_label=link.label if link is not None else None,
     )

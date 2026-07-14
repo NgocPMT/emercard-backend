@@ -805,10 +805,9 @@ async def test_user_card_visibility_filters_and_orders_cards() -> None:
 @pytest.mark.asyncio
 async def test_user_card_service_uses_link_profile_for_authorization() -> None:
     linked_profile = profile(ready=True)
-    foreign_owner = ObjectId("507f1f77bcf86cd799439099")
     linked_card = card(status=CardStatus.ASSIGNED).model_copy(
         update={
-            "owner_id": foreign_owner,
+            "owner_id": OWNER_ID,
             "issued_at": NOW,
             "status": CardStatus.ASSIGNED,
             "is_current": True,
@@ -855,9 +854,9 @@ async def test_user_card_service_uses_link_profile_for_authorization() -> None:
 
     assert [item.id for item in visible] == [linked_card.id]
     assert detail.id == linked_card.id
-    assert activated.status is CardStatus.ACTIVE
-    assert repository.cards[linked_card.id].status is CardStatus.ACTIVE
-    assert repository.cards[linked_card.id].owner_id == foreign_owner
+    assert activated.status is CardStatus.ASSIGNED
+    assert repository.cards[linked_card.id].status is CardStatus.ASSIGNED
+    assert repository.cards[linked_card.id].owner_id == OWNER_ID
 
 
 @pytest.mark.asyncio
@@ -899,9 +898,15 @@ async def test_user_card_service_ignores_disabled_links_for_authorization() -> N
         card_link_assignment_repository=CardLinkAssignmentRepository([assignment]),
     )
 
-    assert await service.list_user_cards(user_id=OWNER_ID) == []
-    with pytest.raises(CardNotFoundError):
-        await service.get_user_card(card_id=linked_card.id, user_id=OWNER_ID)
+    visible = await service.list_user_cards(user_id=OWNER_ID)
+    detail, link, assignment = await service.describe_user_card(
+        card_id=linked_card.id, user_id=OWNER_ID
+    )
+
+    assert [item.id for item in visible] == [linked_card.id]
+    assert detail.id == linked_card.id
+    assert link is not None and link.status is PublicAccessLinkStatus.DISABLED
+    assert assignment is not None and assignment.status is CardLinkAssignmentStatus.ACTIVE
 
 
 @pytest.mark.asyncio
@@ -950,10 +955,10 @@ async def test_user_card_service_issues_linked_card_and_activates_access_state()
 
     assert issued.issued_at == NOW
     assert repository.cards[linked_card.id].issued_at == NOW
-    assert link_repository.links[disabled_link.id].status is PublicAccessLinkStatus.ACTIVE
+    assert link_repository.links[disabled_link.id].status is PublicAccessLinkStatus.DISABLED
     assert (
         assignment_repository.assignments[disabled_assignment.id].status
-        is CardLinkAssignmentStatus.ACTIVE
+        is CardLinkAssignmentStatus.DISABLED
     )
 
 
@@ -999,10 +1004,10 @@ async def test_user_card_service_marks_lost_and_replaces_card_access_state() -> 
 
     assert marked_lost.status is CardStatus.LOST
     assert lost_repository.cards[lost_card.id].status is CardStatus.LOST
-    assert lost_link_repository.links[lost_link.id].status is PublicAccessLinkStatus.DISABLED
+    assert lost_link_repository.links[lost_link.id].status is PublicAccessLinkStatus.REVOKED
     assert (
         lost_assignment_repository.assignments[lost_assignment.id].status
-        is CardLinkAssignmentStatus.DISABLED
+        is CardLinkAssignmentStatus.DETACHED
     )
 
     replacement_card = card(status=CardStatus.ACTIVE)
@@ -1047,11 +1052,11 @@ async def test_user_card_service_marks_lost_and_replaces_card_access_state() -> 
     assert replacement_repository.cards[replacement_card.id].status is CardStatus.REPLACED
     assert (
         replacement_link_repository.links[replacement_link.id].status
-        is PublicAccessLinkStatus.DISABLED
+        is PublicAccessLinkStatus.REVOKED
     )
     assert (
         replacement_assignment_repository.assignments[replacement_assignment.id].status
-        is CardLinkAssignmentStatus.DISABLED
+        is CardLinkAssignmentStatus.DETACHED
     )
 
 
@@ -1099,10 +1104,10 @@ async def test_user_card_service_replacement_creates_new_link_for_replacement_ca
 
     assert repository.cards[replacement.card.id].token_hash is None
     assert repository.cards[replacement.card.id].status is CardStatus.ASSIGNED
-    assert link_repository.links[old_link.id].status is PublicAccessLinkStatus.DISABLED
+    assert link_repository.links[old_link.id].status is PublicAccessLinkStatus.REVOKED
     assert (
         assignment_repository.assignments[old_assignment.id].status
-        is CardLinkAssignmentStatus.DISABLED
+        is CardLinkAssignmentStatus.DETACHED
     )
     new_assignment = await assignment_repository.find_active_by_card_id(replacement.card.id)
     assert new_assignment is not None
@@ -1201,12 +1206,10 @@ async def test_user_card_service_restores_and_revokes_link_state_with_card_actio
             "_id": ObjectId(),
             "card_id": disabled_card.id,
             "public_access_link_id": disabled_link.id,
-            "status": CardLinkAssignmentStatus.DISABLED,
+            "status": CardLinkAssignmentStatus.ACTIVE,
             "attached_at": NOW,
             "updated_at": NOW,
             "attached_by_admin_id": ADMIN_ID,
-            "disabled_at": NOW,
-            "disabled_by_admin_id": ADMIN_ID,
         }
     )
     repository = CardRepository([disabled_card])
@@ -1223,7 +1226,7 @@ async def test_user_card_service_restores_and_revokes_link_state_with_card_actio
     activated = await service.activate_user_card(
         card_id=disabled_card.id, user_id=OWNER_ID, now=NOW
     )
-    assert activated.status is CardStatus.ACTIVE
+    assert activated.status is CardStatus.DISABLED
     assert link_repository.links[disabled_link.id].status is PublicAccessLinkStatus.ACTIVE
     assert (
         assignment_repository.assignments[disabled_assignment.id].status
@@ -1236,7 +1239,7 @@ async def test_user_card_service_restores_and_revokes_link_state_with_card_actio
     assert link_repository.links[disabled_link.id].status is PublicAccessLinkStatus.DISABLED
     assert (
         assignment_repository.assignments[disabled_assignment.id].status
-        is CardLinkAssignmentStatus.DISABLED
+        is CardLinkAssignmentStatus.ACTIVE
     )
     assert disabled.status is CardStatus.DISABLED
 
@@ -1304,6 +1307,8 @@ def test_user_card_routes_are_authenticated_and_safe() -> None:
         "updated_at",
         "can_activate",
         "can_disable",
+        "can_report_lost",
+        "blocking_reason",
         "link_status",
         "link_purpose",
         "link_label",
