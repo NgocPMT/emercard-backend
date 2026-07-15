@@ -62,6 +62,7 @@ Direct user assignment, reassignment, unassignment, and card-local provision/rep
 
 ### Owner link management
 
+- `GET /api/v1/admin/users?limit=&search=` lists current user accounts as safe email/role summaries for profile selection; it excludes administrators and medical data.
 - `GET /api/v1/admin/users/lookup?email=` returns a safe account summary.
 - `GET /api/v1/admin/users/{user_id}/links` lists safe public links for that profile.
 - `POST /api/v1/admin/users/{user_id}/links` creates a pending standalone or card-purpose link for that profile. It is not public until bound to one card, encoded, delivered, and activated.

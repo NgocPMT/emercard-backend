@@ -33,6 +33,15 @@ class InMemoryUserRepository:
     async def find_by_id(self, user_id: str) -> UserDocument | None:
         return self.users.get(user_id)
 
+    async def list_current_users(
+        self, *, limit: int = 50, search: str | None = None
+    ) -> list[UserDocument]:
+        normalized = search.strip().lower() if search else ""
+        users = [
+            user for user in self.users.values() if user.role == "user" and normalized in user.email
+        ]
+        return sorted(users, key=lambda user: user.email)[:limit]
+
     async def create(
         self,
         *,

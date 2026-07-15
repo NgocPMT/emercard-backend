@@ -1,10 +1,12 @@
 """Typed persistence operations for user documents."""
 
+import re
 from datetime import datetime
 from typing import Any
 
 from bson.errors import InvalidId
 from bson.objectid import ObjectId
+from pymongo import ASCENDING
 from pymongo.errors import DuplicateKeyError
 
 from emercard.core.config import Settings
@@ -37,6 +39,25 @@ class UserRepository:
         cursor = self._collection.find({}, projection={"_id": 1})
         documents: list[Any] = await cursor.to_list(length=None)
         return [str(document["_id"]) for document in documents]
+
+    async def list_current_users(
+        self,
+        *,
+        limit: int = 50,
+        search: str | None = None,
+    ) -> list[UserDocument]:
+        """List selectable user accounts without exposing password material."""
+
+        query: dict[str, Any] = {"role": "user"}
+        normalized_search = search.strip() if search is not None else ""
+        if normalized_search:
+            query["email"] = {
+                "$regex": re.escape(normalized_search),
+                "$options": "i",
+            }
+        cursor = self._collection.find(query).sort("email", ASCENDING).limit(limit)
+        documents: list[Any] = await cursor.to_list(length=limit)
+        return [UserDocument.model_validate(document) for document in documents]
 
     async def create(
         self,

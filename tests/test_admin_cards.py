@@ -287,8 +287,11 @@ def test_admin_user_lookup_returns_only_safe_account_fields() -> None:
             json={"email": "admin@example.com", "password": "password-123"},
         )
         response = client.get("/api/v1/admin/users/lookup?email= PERSON@EXAMPLE.COM ")
+        listed = client.get("/api/v1/admin/users?limit=10")
 
     assert response.status_code == 200
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["email"] == "person@example.com"
     assert set(response.json()) == {"id", "email", "role", "created_at", "updated_at"}
     assert response.json()["id"] == str(user_id)
     assert response.json()["email"] == "person@example.com"

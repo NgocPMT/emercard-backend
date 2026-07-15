@@ -74,6 +74,10 @@ class CardOwnerOutput(CardSchema):
     email: str
 
 
+class SafeUserListOutput(CardSchema):
+    items: list[SafeUserOutput]
+
+
 class PublicLinkSummaryOutput(CardSchema):
     id: str
     purpose: PublicLinkPurpose

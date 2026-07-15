@@ -25,6 +25,7 @@ from emercard.modules.cards import (
     LinkProvisioningOutput,
     ProvisioningOutput,
     PublicLinkListOutput,
+    SafeUserListOutput,
     SafeUserOutput,
     to_admin_card,
     to_public_link_summary,
@@ -62,6 +63,16 @@ def build_admin_card_router() -> APIRouter:
         )
         return await _admin_card_output(service, card_id)
 
+    @router.get("/users", response_model=SafeUserListOutput)
+    async def list_users(  # pyright: ignore[reportUnusedFunction]
+        limit: int = Query(default=50, ge=1, le=100),
+        search: str | None = Query(default=None, max_length=254),
+        _: CurrentUserOutput = Depends(require_admin),  # noqa: B008
+        repository: UserRepository = Depends(get_card_user_repository),  # noqa: B008
+    ) -> SafeUserListOutput:
+        users = await repository.list_current_users(limit=limit, search=search)
+        return SafeUserListOutput(items=[_safe_user_output(user) for user in users])
+
     @router.get("/users/lookup", response_model=SafeUserOutput)
     async def lookup_user(  # pyright: ignore[reportUnusedFunction]
         email: str = Query(..., min_length=3, max_length=254),
@@ -73,13 +84,7 @@ def build_admin_card_router() -> APIRouter:
             from emercard.modules.cards.errors import CardUserNotFoundError
 
             raise CardUserNotFoundError("card assignment target does not exist")
-        return SafeUserOutput(
-            id=str(user.id),
-            email=user.email,
-            role=user.role,
-            created_at=user.created_at,
-            updated_at=user.updated_at,
-        )
+        return _safe_user_output(user)
 
     @router.post("/cards/{card_id}/issue", response_model=AdminCardOutput)
     async def issue_card(  # pyright: ignore[reportUnusedFunction]
@@ -336,6 +341,16 @@ async def get_card_service(request: Request) -> CardService:
         card_link_assignment_repository=card_link_assignment_repository,
         idempotency_repository=idempotency,
         custody_event_repository=custody_events,
+    )
+
+
+def _safe_user_output(user: Any) -> SafeUserOutput:
+    return SafeUserOutput(
+        id=str(user.id),
+        email=user.email,
+        role=user.role,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
     )
 
 
