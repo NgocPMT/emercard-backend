@@ -3,6 +3,7 @@ services:
     # MongoDB 8.2 is the compatible local fallback for Linux kernel 6.19+.
     image: mongo:8.2
     restart: unless-stopped
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
     environment:
       MONGO_INITDB_DATABASE: emercard_local
     ports:
@@ -13,7 +14,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "mongosh --quiet --host localhost --eval 'db.adminCommand({ ping: 1 }).ok' | grep -q 1",
+          "mongosh --quiet --host localhost --eval 'try { rs.status().ok } catch (error) { rs.initiate({ _id: \"rs0\", members: [{ _id: 0, host: \"localhost:27017\" }] }).ok }' | grep -q 1",
         ]
       interval: 5s
       timeout: 5s

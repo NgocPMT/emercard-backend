@@ -39,6 +39,12 @@ class UserDocument(UserModel):
     role: UserRole = "user"
     created_at: UtcDateTime
     updated_at: UtcDateTime
+    # Optional verification metadata keeps reads compatible with accounts created
+    # by the email-verification flow while remaining absent from public outputs.
+    email_verified_at: UtcDateTime | None = None
+    email_verification_token_hash: str | None = None
+    email_verification_token_expires_at: UtcDateTime | None = None
+    email_verification_last_sent_at: UtcDateTime | None = None
 
     @field_validator("email")
     @classmethod

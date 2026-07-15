@@ -1,9 +1,10 @@
 """Infrastructure and versioned API routes."""
 
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from emercard.api.admin_card_routes import build_admin_card_router
 from emercard.api.auth_routes import build_auth_router, build_current_user_router
@@ -23,6 +24,22 @@ def build_infrastructure_router() -> APIRouter:
         """Return process liveness without contacting MongoDB."""
 
         return {"status": "ok", "service": request.app.state.settings.app_name}
+
+    @router.get("/e/{token}", include_in_schema=False)
+    async def redirect_legacy_card_link(token: str, request: Request) -> RedirectResponse:  # pyright: ignore[reportUnusedFunction]
+        """Keep older API-hosted local card URLs pointed at the frontend page."""
+
+        settings = request.app.state.settings
+        if settings.frontend_base_url:
+            base_url = f"{settings.frontend_base_url.rstrip('/')}/e"
+        else:
+            base_url = settings.public_profile_base_url.rstrip("/")
+        target = f"{base_url}/{quote(token, safe='')}"
+        return RedirectResponse(
+            target,
+            status_code=307,
+            headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+        )
 
     @router.get("/ready", tags=["infrastructure"], response_model=None)
     async def ready(request: Request) -> dict[str, str] | JSONResponse:  # pyright: ignore[reportUnusedFunction]

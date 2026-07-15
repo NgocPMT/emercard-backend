@@ -77,7 +77,7 @@ class GoogleReverseGeocoder:
         if isinstance(results, list) and results:
             first_result = cast(object, results[0])
             if isinstance(first_result, dict):
-                candidate: object = cast(dict[str, object], first_result).get("formatted_address")
+                candidate: object = cast(dict[str, object], first_result).get("formattedAddress")
             else:
                 candidate = None
             if isinstance(candidate, str):

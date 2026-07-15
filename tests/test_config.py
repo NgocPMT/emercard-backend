@@ -4,6 +4,12 @@ from pydantic import SecretStr, ValidationError
 from emercard.core.config import Settings
 
 
+def test_local_public_card_url_targets_the_frontend_page() -> None:
+    settings = Settings(_env_file=None, environment="test")
+
+    assert settings.public_card_base_url == "http://localhost:4321/e"
+
+
 def test_settings_accept_comma_separated_cors_origins() -> None:
     settings = Settings(
         environment="test",

@@ -14,6 +14,24 @@ def test_health_does_not_require_database(client: tuple[TestClient, FakeDatabase
     assert database.ping_count == 0
 
 
+def test_legacy_card_url_redirects_to_frontend_page() -> None:
+    from emercard.main import create_app
+
+    settings = Settings(
+        _env_file=None,
+        environment="test",
+        public_profile_base_url="http://localhost:4321/e",
+        cors_origins=["http://localhost:4321"],
+    )
+    app = create_app(settings=settings, database=FakeDatabase(ready=True))  # type: ignore[arg-type]
+    with TestClient(app) as test_client:
+        response = test_client.get("/e/example-token", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "http://localhost:4321/e/example-token"
+    assert response.headers["cache-control"] == "no-store"
+
+
 def test_ready_succeeds_after_database_ping(client: tuple[TestClient, FakeDatabase]) -> None:
     test_client, database = client
 

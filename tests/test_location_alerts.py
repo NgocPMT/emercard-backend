@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr, ValidationError
@@ -7,6 +8,8 @@ from pydantic import SecretStr, ValidationError
 from emercard.core.config import Settings
 from emercard.main import create_app
 from emercard.modules.location_alerts import (
+    BrevoEmailDelivery,
+    GoogleReverseGeocoder,
     LocationAlertLimiter,
     LocationAlertRequest,
     LocationAlertResult,
@@ -15,6 +18,36 @@ from emercard.modules.location_alerts import (
 )
 from emercard.modules.profiles import ProfileDocument
 from emercard.modules.public_links.lookup import PrivatePublicProfileLookupResult
+
+
+class FakeResponse:
+    def __init__(self, payload: object, status_code: int = 200) -> None:
+        self.payload = payload
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            request = httpx.Request("GET", "https://provider.test")
+            response = httpx.Response(self.status_code, request=request)
+            raise httpx.HTTPStatusError("provider failure", request=request, response=response)
+
+    def json(self) -> object:
+        return self.payload
+
+
+class FakeHttpClient:
+    def __init__(self, response: FakeResponse) -> None:
+        self.response = response
+        self.get_calls: list[dict[str, object]] = []
+        self.post_calls: list[dict[str, object]] = []
+
+    async def get(self, url: str, **kwargs: object) -> FakeResponse:
+        self.get_calls.append({"url": url, **kwargs})
+        return self.response
+
+    async def post(self, url: str, **kwargs: object) -> FakeResponse:
+        self.post_calls.append({"url": url, **kwargs})
+        return self.response
 
 
 class FakeLookup:
@@ -155,6 +188,83 @@ async def test_location_alert_requires_owner_opt_in_and_does_not_call_providers(
     assert geocoder.calls == []
     assert email.calls == []
     assert audit.events[0]["status"] == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_location_alert_skips_contacts_without_email() -> None:
+    service, geocoder, email, audit = service_for(profile(email=None))
+
+    result = await service.send(token="public-token", request=request(), client_key="127.0.0.1")
+
+    assert result.status == "unavailable"
+    assert geocoder.calls == []
+    assert email.calls == []
+    assert audit.events[0]["status"] == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_google_reverse_geocoder_uses_v4_field_mask_and_prefers_formatted_address() -> None:
+    settings = Settings(
+        environment="test",
+        google_geocoding_api_key=SecretStr("google-secret"),
+    )
+    client = FakeHttpClient(FakeResponse({"results": [{"formattedAddress": "Đường Đồng Khởi"}]}))
+
+    result = await GoogleReverseGeocoder(settings, client=client).reverse(
+        latitude=10.7769,
+        longitude=106.7009,
+    )
+
+    assert result.nearby_place == "Đường Đồng Khởi"
+    assert client.get_calls[0]["url"] == "https://geocode.googleapis.com/v4/geocode/location/10.7769000,106.7009000"
+    assert client.get_calls[0]["params"] == {"languageCode": "vi"}
+    assert client.get_calls[0]["headers"] == {
+        "X-Goog-Api-Key": "google-secret",
+        "X-Goog-FieldMask": "results.formattedAddress",
+    }
+    assert "google-secret" not in str(client.get_calls[0]["url"])
+
+
+@pytest.mark.asyncio
+async def test_google_reverse_geocoder_falls_back_without_a_result() -> None:
+    settings = Settings(environment="test", google_geocoding_api_key=SecretStr("google-secret"))
+    client = FakeHttpClient(FakeResponse({"results": []}))
+
+    result = await GoogleReverseGeocoder(settings, client=client).reverse(
+        latitude=10,
+        longitude=20,
+    )
+
+    assert result.nearby_place == "vị trí được chia sẻ"
+    assert result.map_url == "https://www.google.com/maps?q=10.0000000%2C20.0000000"
+
+
+@pytest.mark.asyncio
+async def test_brevo_email_contains_only_alert_context() -> None:
+    settings = Settings(
+        environment="test",
+        brevo_api_key=SecretStr("brevo-secret"),
+        brevo_sender_email="alerts@example.com",
+        brevo_reply_to_email="reply@example.com",
+    )
+    client = FakeHttpClient(FakeResponse({"messageId": "message-1"}))
+
+    result = await BrevoEmailDelivery(settings, client=client).send_location_alert(
+        recipient="contact@example.com",
+        display_name="Alex Example",
+        nearby_place="Đường Đồng Khởi",
+        map_url="https://www.google.com/maps?q=10,20",
+        occurred_at=datetime(2026, 1, 1, 10, 30, tzinfo=UTC),
+        accuracy_meters=25,
+    )
+
+    assert result == "message-1"
+    payload = client.post_calls[0]["json"]
+    assert isinstance(payload, dict)
+    assert payload["to"] == [{"email": "contact@example.com"}]
+    assert "Đường Đồng Khởi" in payload["textContent"]
+    assert "https://www.google.com/maps?q=10,20" in payload["textContent"]
+    assert "brevo-secret" not in str(payload)
 
 
 @pytest.mark.asyncio

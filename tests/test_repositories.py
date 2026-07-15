@@ -89,6 +89,38 @@ async def test_user_repository_rejects_existing_email_without_database_index() -
 
 
 @pytest.mark.asyncio
+async def test_user_repository_reads_email_verification_metadata_from_legacy_accounts() -> None:
+    database, collection = fake_database()
+    cursor = MagicMock()
+    cursor.sort.return_value = cursor
+    cursor.limit.return_value = cursor
+    cursor.to_list = AsyncMock(
+        return_value=[
+            {
+                "_id": USER_ID,
+                "email": "person@example.com",
+                "password_hash": "argon2-hash",
+                "role": "user",
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+                "email_verified_at": None,
+                "email_verification_token_hash": "token-hash",
+                "email_verification_token_expires_at": "2026-01-02T00:00:00Z",
+                "email_verification_last_sent_at": "2026-01-01T12:00:00Z",
+            }
+        ]
+    )
+    collection.find.return_value = cursor
+    repository = UserRepository(database, Settings(environment="test"))
+
+    users = await repository.list_current_users(limit=100)
+
+    assert len(users) == 1
+    assert users[0].email_verification_token_hash == "token-hash"
+    assert users[0].email_verification_last_sent_at is not None
+
+
+@pytest.mark.asyncio
 async def test_user_repository_canonicalizes_lookup_and_maps_duplicate_email() -> None:
     database, collection = fake_database()
     collection.find_one = AsyncMock(return_value=None)
