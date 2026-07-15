@@ -74,6 +74,19 @@ def build_user_card_router() -> APIRouter:
         )
         return to_user_card(card, link=link)
 
+    @router.post("/me/cards/{card_id}/revoke", response_model=UserCardOutput)
+    async def revoke_my_card_link(  # pyright: ignore[reportUnusedFunction]
+        card_id: str,
+        user: CurrentUserOutput = Depends(get_current_user),  # noqa: B008
+        service: CardService = Depends(get_user_card_service),  # noqa: B008
+    ) -> UserCardOutput:
+        card = await service.revoke_user_card_link(card_id=card_id, user_id=user.id)
+        _card, link, _assignment = await service.describe_user_card(
+            card_id=card_id,
+            user_id=user.id,
+        )
+        return to_user_card(card, link=link)
+
     @router.post("/me/cards/{card_id}/lost", response_model=UserCardOutput)
     async def report_my_card_lost(  # pyright: ignore[reportUnusedFunction]
         card_id: str,

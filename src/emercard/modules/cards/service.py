@@ -1552,6 +1552,38 @@ class CardService:
             expected_status=PublicAccessLinkStatus.DISABLED,
         )
 
+    async def revoke_user_card_link(
+        self,
+        *,
+        card_id: ObjectId | str,
+        user_id: ObjectId | str,
+        now: datetime | None = None,
+    ) -> CardDocument:
+        """Revoke the authenticated user's attached profile link permanently."""
+
+        _card, link, _assignment = await self.describe_user_card(
+            card_id=card_id,
+            user_id=user_id,
+        )
+        if link is None:
+            raise CardNotFoundError("card does not exist")
+        if link.status is PublicAccessLinkStatus.REVOKED:
+            return _card
+        if link.status is PublicAccessLinkStatus.EXPIRED:
+            raise CardTerminalStateError("terminal links cannot change state")
+        repository = self._public_access_link_repository
+        if repository is None:
+            raise CardServiceUnavailableError("card service is unavailable")
+        try:
+            revoked = await repository.revoke_link(link_id=link.id, now=now)
+        except (InvalidIdentifierError, RepositoryError, PyMongoError) as error:
+            if isinstance(error, InvalidIdentifierError):
+                raise CardNotFoundError("card does not exist") from error
+            raise CardServiceUnavailableError("card service is unavailable") from error
+        if revoked is None:
+            raise CardInvalidTransitionError("card link revocation was not applied")
+        return _card
+
     async def _load_user_action_card(
         self,
         *,

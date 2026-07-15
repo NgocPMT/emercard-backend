@@ -1429,6 +1429,7 @@ def test_user_card_routes_are_authenticated_and_safe() -> None:
     service.describe_user_card.return_value = (safe_card, None, None)
     service.activate_user_card.return_value = safe_card
     service.disable_user_card.return_value = safe_card
+    service.revoke_user_card_link.return_value = safe_card
     service.mark_lost.return_value = safe_card
     app = create_app(
         settings=settings(),
@@ -1444,6 +1445,7 @@ def test_user_card_routes_are_authenticated_and_safe() -> None:
             client.get(f"/api/v1/me/cards/{safe_card.id}"),
             client.post(f"/api/v1/me/cards/{safe_card.id}/activate"),
             client.post(f"/api/v1/me/cards/{safe_card.id}/disable"),
+            client.post(f"/api/v1/me/cards/{safe_card.id}/revoke"),
             client.post(f"/api/v1/me/cards/{safe_card.id}/lost"),
         ]
         login = client.post(
@@ -1457,9 +1459,10 @@ def test_user_card_routes_are_authenticated_and_safe() -> None:
         detail = client.get(f"/api/v1/me/cards/{safe_card.id}")
         activated = client.post(f"/api/v1/me/cards/{safe_card.id}/activate")
         disabled = client.post(f"/api/v1/me/cards/{safe_card.id}/disable")
+        revoked = client.post(f"/api/v1/me/cards/{safe_card.id}/revoke")
         lost = client.post(f"/api/v1/me/cards/{safe_card.id}/lost")
 
-    assert [response.status_code for response in unauthenticated] == [401] * 5
+    assert [response.status_code for response in unauthenticated] == [401] * 6
     assert login.status_code == 200
     assert empty.status_code == 200
     assert empty.json() == {"cards": []}
@@ -1468,8 +1471,9 @@ def test_user_card_routes_are_authenticated_and_safe() -> None:
         detail.status_code,
         activated.status_code,
         disabled.status_code,
+        revoked.status_code,
         lost.status_code,
-    ] == [200] * 5
+    ] == [200] * 6
     assert set(listed.json()["cards"][0]) == {
         "id",
         "serial",
@@ -1482,6 +1486,7 @@ def test_user_card_routes_are_authenticated_and_safe() -> None:
         "updated_at",
         "can_activate",
         "can_disable",
+        "can_revoke",
         "can_report_lost",
         "blocking_reason",
         "link_status",

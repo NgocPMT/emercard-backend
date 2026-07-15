@@ -148,6 +148,7 @@ class UserCardOutput(CardSchema):
     updated_at: UtcDateTime
     can_activate: bool
     can_disable: bool
+    can_revoke: bool
     can_report_lost: bool
     blocking_reason: str | None = None
     link_status: PublicAccessLinkStatus | None = None
@@ -207,6 +208,16 @@ def to_user_card(
         and card.encoding_verified_at is not None
         and link_status is PublicAccessLinkStatus.ACTIVE
     )
+    can_revoke = (
+        card.is_current
+        and card.status not in terminal_statuses
+        and link_status
+        in {
+            PublicAccessLinkStatus.PENDING,
+            PublicAccessLinkStatus.ACTIVE,
+            PublicAccessLinkStatus.DISABLED,
+        }
+    )
     can_report_lost = card.is_current and card.status in {
         CardStatus.ASSIGNED,
         CardStatus.ACTIVE,
@@ -238,6 +249,7 @@ def to_user_card(
         updated_at=card.updated_at,
         can_activate=can_activate,
         can_disable=can_disable,
+        can_revoke=can_revoke,
         can_report_lost=can_report_lost,
         blocking_reason=blocking_reason,
         link_status=link_status,
