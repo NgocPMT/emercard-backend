@@ -25,5 +25,9 @@ services:
         sync: false
       - key: EMERCARD_CORS_ALLOW_CREDENTIALS
         value: "true"
+      - key: EMERCARD_PUBLIC_CARD_BASE_URL
+        value: https://emercard.id.vn/e
+      - key: EMERCARD_PUBLIC_PROFILE_BASE_URL
+        value: https://emercard.id.vn/e
       - key: EMERCARD_AUTH_COOKIE_SECURE
         value: "true"
