@@ -232,7 +232,7 @@ class InMemoryLinkRepository:
                 "created_at": now or NOW,
                 "updated_at": now or NOW,
                 "activated_at": now or NOW if status is PublicAccessLinkStatus.ACTIVE else None,
-                "disabled_at": None if status is PublicAccessLinkStatus.ACTIVE else now or NOW,
+                "disabled_at": now or NOW if status is PublicAccessLinkStatus.DISABLED else None,
                 "revoked_at": None,
                 "expires_at": None,
                 "expired_at": None,
@@ -245,6 +245,7 @@ class InMemoryLinkRepository:
         *,
         link_id: ObjectId | str,
         token_hash: str,
+        status: PublicAccessLinkStatus = PublicAccessLinkStatus.ACTIVE,
         now: object | None = None,
         session: object | None = None,
     ) -> PublicAccessLinkDocument:
@@ -259,12 +260,12 @@ class InMemoryLinkRepository:
                 "purpose": purpose,
                 "label": existing.label if existing is not None else None,
                 "token_hash": token_hash,
-                "status": PublicAccessLinkStatus.ACTIVE,
+                "status": status,
                 "created_by": existing.created_by if existing is not None else None,
                 "created_at": created_at,
                 "updated_at": now or NOW,
-                "activated_at": now or NOW,
-                "disabled_at": None,
+                "activated_at": now or NOW if status is PublicAccessLinkStatus.ACTIVE else None,
+                "disabled_at": now or NOW if status is PublicAccessLinkStatus.DISABLED else None,
                 "revoked_at": None,
                 "expires_at": None,
                 "expired_at": None,
@@ -483,6 +484,7 @@ class FlakyLifecycleLinkRepository(InMemoryLinkRepository):
         *,
         link_id: ObjectId | str,
         token_hash: str,
+        status: PublicAccessLinkStatus = PublicAccessLinkStatus.ACTIVE,
         now: object | None = None,
         session: object | None = None,
     ) -> PublicAccessLinkDocument:
@@ -490,7 +492,11 @@ class FlakyLifecycleLinkRepository(InMemoryLinkRepository):
             self.rotate_failures -= 1
             raise RepositoryConflictError("collision")
         return await super().rotate_link(
-            link_id=link_id, token_hash=token_hash, now=now, session=session
+            link_id=link_id,
+            token_hash=token_hash,
+            status=status,
+            now=now,
+            session=session,
         )
 
 
@@ -863,7 +869,7 @@ async def test_public_profile_command_main_prints_safe_service_errors(
 
 
 @pytest.mark.asyncio
-async def test_public_link_service_generates_rotates_and_disables_links() -> None:
+async def test_public_link_service_creates_pending_links_until_card_binding() -> None:
     links = InMemoryLinkRepository()
     profiles = InMemoryProfileRepository(ready_profile())
     service = PublicProfileLinkService(
@@ -871,10 +877,7 @@ async def test_public_link_service_generates_rotates_and_disables_links() -> Non
     )
 
     created = await service.generate(profile_id=PROFILE_ID)
-    cached = await service.generate(profile_id=PROFILE_ID)
     rotated = await service.regenerate(profile_id=PROFILE_ID)
-    disabled = await service.disable(profile_id=PROFILE_ID)
-    reactivated = await service.generate(profile_id=PROFILE_ID)
 
     assert created.status == "created"
     assert created.raw_token is not None
@@ -882,11 +885,6 @@ async def test_public_link_service_generates_rotates_and_disables_links() -> Non
         "https://app.example/e/"
     )
     assert created.raw_token not in links.link.model_dump_json()
-    assert cached.status == "existing"
-    assert cached.public_url == created.public_url
     assert rotated.status == "rotated"
     assert rotated.public_url is not None and rotated.public_url != created.public_url
-    assert disabled.status == "disabled"
-    assert disabled.disabled is True
-    assert reactivated.status == "reactivated"
-    assert reactivated.public_url is not None and reactivated.public_url != rotated.public_url
+    assert links.link.status is PublicAccessLinkStatus.PENDING

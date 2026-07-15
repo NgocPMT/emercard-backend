@@ -403,7 +403,7 @@ async def test_migration_apply_creates_safe_link_and_assignment_records(
     assert [link.status for link in link_repository.links] == [
         PublicAccessLinkStatus.PENDING,
         PublicAccessLinkStatus.REVOKED,
-        PublicAccessLinkStatus.ACTIVE,
+        PublicAccessLinkStatus.PENDING,
     ]
 
 

@@ -53,10 +53,12 @@ The first command group should return safe JSON and never print raw tokens in er
 
 ## Card and lookup checks
 
-- active/current/issued/encoding-verified cards resolve through the constrained card-link/public-link path;
+- active/current/issued/encoding-verified cards resolve through the constrained `card -> link -> profile` path;
+- pending/unbound links never resolve publicly; only links with an active current card assignment can resolve;
 - disabled, lost, replaced, void, non-current, assigned, unknown, malformed, ownerless, and missing-profile cases return neutral errors;
 - multiple active cards for one owner resolve independently;
-- disabling a card or link blocks the unchanged URL, and reactivation restores it when allowed;
+- disabling a link blocks the unchanged URL, and reactivation restores it when allowed without changing the card assignment or token;
+- pre-delivery rebinding revokes the previous link, while delivered/lost/replaced cards retain their historical assignment and revoke only link access;
 - success and error responses contain the required privacy headers;
 - request logs contain only the route template and low-cardinality outcome, never token-bearing paths or hashes.
 

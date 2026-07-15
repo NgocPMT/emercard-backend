@@ -170,12 +170,16 @@ class CustodyEventOutput(CardSchema):
     created_at: UtcDateTime
 
 
-def encoding_state(card: CardDocument) -> EncodingState:
-    if card.provisioned_at is None:
-        return "not_provisioned"
-    if card.encoding_verified_at is None:
+def encoding_state(
+    card: CardDocument,
+    *,
+    link: PublicAccessLinkDocument | None = None,
+) -> EncodingState:
+    if card.encoding_verified_at is not None:
+        return "verified"
+    if card.provisioned_at is not None or link is not None:
         return "link_generated"
-    return "verified"
+    return "not_provisioned"
 
 
 def to_user_card(
@@ -254,7 +258,7 @@ def to_admin_card(
         serial=card.serial,
         status=card.status,
         is_current=card.is_current,
-        encoding_state=encoding_state(card),
+        encoding_state=encoding_state(card, link=link),
         owner=owner,
         link=to_public_link_summary(link) if link is not None else None,
         assignment=to_card_assignment_summary(assignment) if assignment is not None else None,

@@ -105,7 +105,7 @@ class PublicAccessLinkRepository:
         purpose: PublicLinkPurpose,
         token_hash: str,
         label: str | None = None,
-        status: PublicAccessLinkStatus = PublicAccessLinkStatus.ACTIVE,
+        status: PublicAccessLinkStatus = PublicAccessLinkStatus.PENDING,
         created_by: ObjectId | str | None = None,
         now: datetime | None = None,
         session: Any | None = None,
@@ -143,6 +143,7 @@ class PublicAccessLinkRepository:
         link_id: ObjectId | str,
         token_hash: str,
         now: datetime | None = None,
+        status: PublicAccessLinkStatus = PublicAccessLinkStatus.ACTIVE,
         session: Any | None = None,
     ) -> PublicAccessLinkDocument:
         timestamp = now or utc_now()
@@ -155,10 +156,14 @@ class PublicAccessLinkRepository:
                     {
                         "$set": {
                             "token_hash": canonical_hash,
-                            "status": PublicAccessLinkStatus.ACTIVE,
+                            "status": status,
                             "updated_at": timestamp,
-                            "activated_at": timestamp,
-                            "disabled_at": None,
+                            "activated_at": timestamp
+                            if status is PublicAccessLinkStatus.ACTIVE
+                            else None,
+                            "disabled_at": timestamp
+                            if status is PublicAccessLinkStatus.DISABLED
+                            else None,
                             "revoked_at": None,
                             "expires_at": None,
                             "expired_at": None,
@@ -175,6 +180,40 @@ class PublicAccessLinkRepository:
                 )
             return PublicAccessLinkDocument.model_validate(document)
         raise RepositoryConflictError("public profile link token could not be made unique")
+
+    async def mark_pending(
+        self,
+        *,
+        link_id: ObjectId | str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> PublicAccessLinkDocument | None:
+        timestamp = now or utc_now()
+        document = await self._collection.find_one_and_update(
+            {
+                "$and": [
+                    _identifier_query("_id", _object_id(link_id)),
+                    {
+                        "status": {
+                            "$in": [PublicAccessLinkStatus.ACTIVE, PublicAccessLinkStatus.DISABLED]
+                        }
+                    },
+                ]
+            },
+            {
+                "$set": {
+                    "status": PublicAccessLinkStatus.PENDING,
+                    "updated_at": timestamp,
+                    "activated_at": None,
+                    "disabled_at": None,
+                    "revoked_at": None,
+                    "expired_at": None,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+            **_session_kwargs(session),
+        )
+        return _link(document)
 
     async def activate_link(
         self,
@@ -348,6 +387,7 @@ class PublicAccessLinkRepository:
             profile_id=profile_id,
             purpose=PublicLinkPurpose.STANDALONE,
             token_hash=token_hash,
+            status=PublicAccessLinkStatus.PENDING,
             now=now,
             session=session,
         )
@@ -368,11 +408,16 @@ class PublicAccessLinkRepository:
                 profile_id=profile_id,
                 purpose=PublicLinkPurpose.STANDALONE,
                 token_hash=token_hash,
+                status=PublicAccessLinkStatus.PENDING,
                 now=now,
                 session=session,
             )
         return await self.rotate_link(
-            link_id=link.id, token_hash=token_hash, now=now, session=session
+            link_id=link.id,
+            token_hash=token_hash,
+            status=PublicAccessLinkStatus.PENDING,
+            now=now,
+            session=session,
         )
 
     async def disable_for_profile(

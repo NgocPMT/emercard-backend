@@ -209,9 +209,10 @@ async def test_retirement_apply_drops_indexes_and_clears_legacy_fields() -> None
     assert report["cards_retired"] == 1
     assert report["profiles_retired"] == 1
     assert cards_collection.documents[0].get("token_hash") is None
-    assert cards_collection.documents[0].get("provisioned_at") is None
-    assert cards_collection.documents[0].get("encoding_verified_at") is None
-    assert cards_collection.documents[0].get("encoded_by_admin_id") is None
+    # Link-backed physical verification metadata survives legacy token retirement.
+    assert cards_collection.documents[0].get("provisioned_at") is not None
+    assert cards_collection.documents[0].get("encoding_verified_at") is not None
+    assert cards_collection.documents[0].get("encoded_by_admin_id") is not None
     assert profiles_collection.documents[0]["public_access"]["enabled"] is False
     assert profiles_collection.documents[0]["public_access"].get("token") is None
 

@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 
+from emercard.modules.card_link_assignments import CardLinkAssignmentRepository
 from emercard.modules.profiles import ProfileRepository
 from emercard.modules.public_links import (
     PublicAccessLinkRepository,
@@ -44,6 +45,13 @@ async def get_public_profile_lookup_service(request: Request) -> PublicProfileLo
         )
 
     assignment_repository: Any = getattr(request.app.state, "card_link_assignment_repository", None)
+    database = getattr(request.app.state, "database", None)
+    database_value = getattr(database, "database", None)
+    if assignment_repository is None and database_value is not None:
+        assignment_repository = CardLinkAssignmentRepository(
+            database_value,
+            request.app.state.settings,
+        )
 
     return PublicProfileLookupService(
         link_repository,

@@ -110,10 +110,13 @@ class CardDocument(CardModel):
         ):
             raise ValueError("lost and replaced cards must have an owner and be non-current")
         if self.legacy_token_hash is None:
-            if self.provisioned_at is not None:
-                raise ValueError("unprovisioned cards cannot have provisioning metadata")
-            if self.encoding_verified_at is not None or self.encoded_by_admin_id is not None:
-                raise ValueError("unprovisioned cards cannot have encoding metadata")
+            # Link-first cards use the attached PublicAccessLink token instead of
+            # persisting a card-local bearer hash. Physical encoding still records
+            # provisioning and verification timestamps on the card.
+            if self.encoding_verified_at is not None and self.provisioned_at is None:
+                raise ValueError("verified link-backed cards require a provisioning timestamp")
+            if self.encoding_verified_at is None and self.encoded_by_admin_id is not None:
+                raise ValueError("encoding verifier requires a verification timestamp")
         elif self.provisioned_at is None:
             raise ValueError("provisioned cards require a timestamp")
         if self.encoding_verified_at is None and self.encoded_by_admin_id is not None:

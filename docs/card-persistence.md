@@ -27,15 +27,19 @@ user
   -> one medical profile
   -> zero or more public links
 
+profile
+  -> many pending/active public links
+
 card
-  -> one active assignment to one card-purpose link
+  -> zero or one current assignment to one link
   -> custody history in card_custody_events
 
-standalone public link
-  -> profile-scoped preview / sharing link
+link
+  -> zero or one card (pending links wait for admin binding)
+  -> public access only after card binding, encoding verification, and delivery
 ```
 
-A card-purpose link is the anonymous access token for one card. A standalone link is separate and is used for profile preview or sharing. The assigned link’s profile is the source of authorization and profile association; `CardDocument.owner_id` remains a custody field, not the anonymous lookup source.
+A public link is the anonymous access token for one profile. A link starts pending, whether its initial purpose is `card` or `standalone`; “standalone” means it is not yet bound to a physical card, not that it may be publicly active without one. Each link can bind to at most one card and each card can have at most one current link. The link’s profile is the source of public authorization; `CardDocument.owner_id` remains delivery/custody metadata, not the anonymous lookup source.
 
 ## Card identity
 
@@ -68,16 +72,18 @@ A card-purpose link is the anonymous access token for one card. A standalone lin
 - `revoked`
 - `expired`
 
-Card-purpose links begin pending when provisioning is first created. They become active only after the card has been encoded, verified, assigned, and issued. Standalone links may be generated, regenerated, and disabled independently.
+All newly created links begin pending. A link cannot activate while unbound. Activation requires card binding, physical encoding verification, and card delivery/issuance. Temporary disablement changes only `PublicAccessLink.status`; the assignment and physical card remain attached. Rebinding is allowed only before delivery; the prior link is revoked automatically. Delivered cards cannot detach or rebind. Standalone links are pending profile links awaiting admin card binding; they are not independently public.
 
 ## Admin workflow
 
 1. Create a blank card.
-2. Provision a card-purpose link for that card.
-3. Write the one-time URL to the physical card.
-4. Confirm the read-back URL.
-5. Assign the verified card to a user.
-6. Issue the card.
+2. Admin creates a pending profile link for a ready profile.
+3. Admin binds the pending link to the blank card.
+4. Write the one-time URL to the physical card.
+5. Confirm the read-back URL.
+6. Assign the verified card for delivery to the profile owner.
+7. Issue/deliver the card.
+8. Activate the attached link when public access should begin.
 
 If a card is lost, disabled, detached, or replaced, the backend deactivates the assignment and disables or revokes the associated link.
 

@@ -68,9 +68,11 @@ The collection uses:
 - a unique `token_hash` index
 - a `status` index
 
+Every new link is persisted as `pending`; public activation is allowed only after a current card-link assignment exists and the card has passed encoding and delivery gates.
+
 ## Card link assignments
 
-`card_link_assignments` records the one-to-one relationship between a card and a card-purpose link. A document contains:
+`card_link_assignments` records the one-to-one relationship between a card and a profile link. A document contains:
 
 - `_id`
 - `card_id`

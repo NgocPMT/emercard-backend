@@ -447,6 +447,7 @@ class CardRepository:
             },
             {
                 "$set": {
+                    "provisioned_at": timestamp,
                     "encoding_verified_at": timestamp,
                     "encoded_by_admin_id": verifier,
                     "updated_at": timestamp,
@@ -500,7 +501,10 @@ class CardRepository:
                 "_id": identifier,
                 "status": CardStatus.UNASSIGNED,
                 "owner_id": None,
-                "token_hash": {"$type": "string"},
+                "$or": [
+                    {"token_hash": {"$type": "string"}},
+                    {"provisioned_at": {"$type": "date"}},
+                ],
                 "encoding_verified_at": {"$type": "date"},
                 "issued_at": None,
             },

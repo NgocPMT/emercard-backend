@@ -63,7 +63,7 @@ class PublicAccessLinkRepositoryProtocol(Protocol):
         purpose: PublicLinkPurpose,
         token_hash: str,
         label: str | None = None,
-        status: PublicAccessLinkStatus = PublicAccessLinkStatus.ACTIVE,
+        status: PublicAccessLinkStatus = PublicAccessLinkStatus.PENDING,
         created_by: ObjectId | str | None = None,
         now: datetime | None = None,
         session: Any | None = None,
@@ -74,6 +74,7 @@ class PublicAccessLinkRepositoryProtocol(Protocol):
         *,
         link_id: ObjectId | str,
         token_hash: str,
+        status: PublicAccessLinkStatus = PublicAccessLinkStatus.ACTIVE,
         now: datetime | None = None,
         session: Any | None = None,
     ) -> PublicAccessLinkDocument: ...
@@ -149,7 +150,7 @@ class PublicProfileLinkService:
             issued = self._cache(profile.id, PublicLinkPurpose.STANDALONE, token)
             return PublicProfileLinkResult(
                 action="generate",
-                status="reactivated",
+                status="pending",
                 profile_id=str(profile.id),
                 public_url=issued.public_url,
                 raw_token=issued.raw_token,
@@ -275,6 +276,7 @@ class PublicProfileLinkService:
                     purpose=purpose,
                     token_hash=token_hash,
                     label=label,
+                    status=PublicAccessLinkStatus.PENDING,
                     now=now or utc_now(),
                 )
             except RepositoryConflictError:
@@ -298,6 +300,7 @@ class PublicProfileLinkService:
                 persisted = await self._link_repository.rotate_link(
                     link_id=link_id,
                     token_hash=token_hash,
+                    status=PublicAccessLinkStatus.PENDING,
                     now=now or utc_now(),
                 )
             except RepositoryConflictError:

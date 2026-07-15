@@ -81,10 +81,10 @@ async def run(
             {
                 "$set": {"updated_at": timestamp},
                 "$unset": {
+                    # Link-backed cards retain physical provisioning and
+                    # verification metadata; only the legacy card bearer hash
+                    # is retired.
                     "token_hash": "",
-                    "provisioned_at": "",
-                    "encoding_verified_at": "",
-                    "encoded_by_admin_id": "",
                 },
             },
         )

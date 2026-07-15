@@ -54,26 +54,29 @@ Every route below requires an authenticated administrator.
 
 ### Card-link provisioning
 
-- `POST /api/v1/admin/cards/{cardId}/provision-link` returns the raw public token and URL once with `Cache-Control: no-store`.
-- `POST /api/v1/admin/cards/{cardId}/reprovision-link` rotates the card link before verification.
-- `POST /api/v1/admin/cards/{cardId}/confirm-encoding` verifies a read-back `public_url`.
+- `POST /api/v1/admin/cards/{cardId}/provision-link` is rejected; links are created for profiles first.
+- `POST /api/v1/admin/cards/{cardId}/reprovision-link` is rejected; rebind to another pending profile link instead.
+- `POST /api/v1/admin/cards/{cardId}/confirm-encoding` verifies a read-back `public_url` for the currently attached link.
 - `GET /api/v1/admin/cards/{cardId}/link` returns the safe card/link summary.
-- `POST /api/v1/admin/cards/{cardId}/link/attach` attaches an existing card-purpose link.
-- `POST /api/v1/admin/cards/{cardId}/link/detach` detaches the current link.
-- `POST /api/v1/admin/cards/{cardId}/link/revoke` revokes the current link.
+- `POST /api/v1/admin/cards/{cardId}/link/attach` binds one pending profile link. Before delivery it may rebind, revoking the prior link automatically.
+- `POST /api/v1/admin/cards/{cardId}/link/detach` is rejected; delivered cards retain their link binding.
+- `POST /api/v1/admin/cards/{cardId}/link/activate` activates an encoded, delivered attached link.
+- `POST /api/v1/admin/cards/{cardId}/link/disable` temporarily disables the attached link.
+- `POST /api/v1/admin/cards/{cardId}/link/revoke` permanently revokes the attached link without detaching it.
 
 ### Owner link management
 
 - `GET /api/v1/admin/users/lookup?email=` returns a safe account summary.
 - `GET /api/v1/admin/users/{user_id}/links` lists safe public links for that profile.
-- `POST /api/v1/admin/users/{user_id}/links` creates a standalone or card-purpose link for that profile.
+- `POST /api/v1/admin/users/{user_id}/links` creates a pending standalone or card-purpose link for that profile. It is not public until bound to one card, encoded, delivered, and activated.
 
 Safe admin responses never expose raw tokens, token hashes, or medical-profile data except through the explicit public-profile projection. Provisioning responses are the only admin responses that include a raw URL and they are marked `Cache-Control: no-store`.
 
 ## Public profile links
 
 - `GET /api/v1/public/{token}` is the canonical anonymous lookup.
-- Success returns `200` with `{ "profile": PublicProfileOutput }`.
+- Success returns `200` with `{ "profile": PublicProfileOutput }` only for an active link with one current card assignment.
+- An active but unbound token is treated as unavailable and returns `404 public_profile.not_found`.
 - Invalid or unknown tokens return `404 public_profile.not_found`.
 - Disabled links return `410 public_profile.disabled`.
 - Pending, expired, revoked, or missing-profile cases return the corresponding neutral safe error.

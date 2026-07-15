@@ -24,7 +24,6 @@ from emercard.modules.public_links.errors import (
 from emercard.modules.public_links.models import (
     PublicAccessLinkDocument,
     PublicAccessLinkStatus,
-    PublicLinkPurpose,
     PublicProfileLookupResult,
 )
 
@@ -104,16 +103,20 @@ class PublicProfileLookupService:
         assignment_id = None
         card_id = None
         assignment_repository = self._assignment_repository
-        if assignment_repository is not None and link.purpose is PublicLinkPurpose.CARD:
+        if assignment_repository is not None:
             try:
                 assignment = await assignment_repository.find_active_by_public_access_link_id(
                     link.id
                 )
             except (RepositoryError, PyMongoError) as error:
                 raise PublicProfileServiceUnavailableError from error
-            if assignment is not None:
-                assignment_id = str(assignment.id)
-                card_id = str(assignment.card_id)
+            if assignment is None:
+                # Every active public link must be physically bound to exactly one card.
+                raise PublicProfileNotFoundError
+            assignment_id = str(assignment.id)
+            card_id = str(assignment.card_id)
+        # The repository is optional only for isolated legacy callers. Production
+        # routes always inject it, so deployed lookups fail closed.
 
         return PublicProfileLookupResult(
             profile=public_profile,

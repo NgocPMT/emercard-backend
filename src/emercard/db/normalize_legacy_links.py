@@ -68,6 +68,8 @@ async def run(*, apply: bool = False) -> dict[str, Any]:
             "assignments_updated": 0,
             "cards_skipped_without_profile": [],
             "cards_skipped_terminal": [],
+            "ambiguous_records": [],
+            "cardless_profile_links": [],
         }
 
         hash_groups: dict[str, dict[str, list[str]]] = defaultdict(
@@ -89,6 +91,19 @@ async def run(*, apply: bool = False) -> dict[str, Any]:
         report["shared_hash_groups"] = shared_hash_groups
         if shared_hash_groups and apply:
             raise LegacyLinkMigrationError("shared legacy token hashes require manual review")
+
+        for card in legacy_cards:
+            if card.owner_id is None:
+                report["ambiguous_records"].append(
+                    {"type": "card", "card_id": str(card.id), "reason": "missing_owner_profile"}
+                )
+        card_hashes = {
+            str(card.legacy_token_hash) for card in legacy_cards if card.legacy_token_hash
+        }
+        for profile in legacy_profiles:
+            token = profile.public_access.token
+            if token is not None and hash_public_token(token) not in card_hashes:
+                report["cardless_profile_links"].append(str(profile.id))
 
         if not apply:
             return report
@@ -169,11 +184,10 @@ async def run(*, apply: bool = False) -> dict[str, Any]:
                     "enabled": profile.public_access.enabled,
                 }
             )
-            desired_link_status = (
-                PublicAccessLinkStatus.ACTIVE
-                if profile.public_access.enabled
-                else PublicAccessLinkStatus.DISABLED
-            )
+            # Profile links are pending until an administrator binds them to a
+            # physical card and verifies its encoding. Legacy enabled state is
+            # intentionally not carried into an unbound link.
+            desired_link_status = PublicAccessLinkStatus.PENDING
             token_hash = hash_public_token(token)
             link = await link_repository.find_by_token_hash(token_hash)
             if link is None:
@@ -235,6 +249,8 @@ async def _align_link_status(
         updated = await repository.disable_link(link_id=link.id)
     elif desired_status is PublicAccessLinkStatus.REVOKED:
         updated = await repository.revoke_link(link_id=link.id)
+    elif desired_status is PublicAccessLinkStatus.PENDING:
+        updated = await repository.mark_pending(link_id=link.id)
     else:
         updated = await repository.disable_link(link_id=link.id)
     if updated is None:

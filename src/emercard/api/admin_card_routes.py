@@ -316,12 +316,13 @@ def build_admin_card_router() -> APIRouter:
     async def attach_card_link(  # pyright: ignore[reportUnusedFunction]
         card_id: str,
         payload: LinkAttachInput,
-        _: CurrentUserOutput = Depends(require_admin),  # noqa: B008
+        current_admin: CurrentUserOutput = Depends(require_admin),  # noqa: B008
         service: CardService = Depends(get_card_service),  # noqa: B008
     ) -> AdminCardOutput:
         await service.attach_card_link(
             card_id=card_id,
             public_access_link_id=payload.public_access_link_id,
+            admin_id=current_admin.id,
         )
         return await _admin_card_output(service, card_id)
 
@@ -427,6 +428,7 @@ async def get_card_service(request: Request) -> CardService:
         repository,
         user_repository,
         public_card_base_url=request.app.state.settings.public_card_base_url,
+        public_profile_base_url=request.app.state.settings.public_profile_base_url,
         profile_repository=profile_repository,
         public_access_link_repository=public_access_link_repository,
         card_link_assignment_repository=card_link_assignment_repository,

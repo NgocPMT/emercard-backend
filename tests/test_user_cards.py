@@ -23,6 +23,7 @@ from emercard.modules.cards import (
     CardNotFoundError,
     CardNotIssuedError,
     CardProfileNotReadyError,
+    CardReassignmentNotAllowedError,
     CardService,
     CardServiceUnavailableError,
     CardStatus,
@@ -67,6 +68,13 @@ class ProfileRepository:
         if self.profile is None:
             return None
         return self.profile if str(self.profile.user_id) == str(user_id) else None
+
+    async def find_by_id(self, profile_id: ObjectId | str) -> ProfileDocument | None:
+        if self.failure is not None:
+            raise self.failure
+        if self.profile is None:
+            return None
+        return self.profile if str(self.profile.id) == str(profile_id) else None
 
 
 class CardRepository:
@@ -1068,7 +1076,7 @@ async def test_user_card_service_marks_lost_and_replaces_card_access_state() -> 
     assert lost_link_repository.links[lost_link.id].status is PublicAccessLinkStatus.REVOKED
     assert (
         lost_assignment_repository.assignments[lost_assignment.id].status
-        is CardLinkAssignmentStatus.DETACHED
+        is CardLinkAssignmentStatus.ACTIVE
     )
 
     replacement_card = card(status=CardStatus.ACTIVE)
@@ -1117,7 +1125,7 @@ async def test_user_card_service_marks_lost_and_replaces_card_access_state() -> 
     )
     assert (
         replacement_assignment_repository.assignments[replacement_assignment.id].status
-        is CardLinkAssignmentStatus.DETACHED
+        is CardLinkAssignmentStatus.ACTIVE
     )
 
 
@@ -1168,7 +1176,7 @@ async def test_user_card_service_replacement_creates_new_link_for_replacement_ca
     assert link_repository.links[old_link.id].status is PublicAccessLinkStatus.REVOKED
     assert (
         assignment_repository.assignments[old_assignment.id].status
-        is CardLinkAssignmentStatus.DETACHED
+        is CardLinkAssignmentStatus.ACTIVE
     )
     new_assignment = await assignment_repository.find_active_by_card_id(replacement.card.id)
     assert new_assignment is not None
@@ -1324,7 +1332,7 @@ async def test_admin_revocation_is_terminal_from_every_mutable_link_state(
     link = next(iter(links.links.values()))
     assignment = next(iter(assignments.assignments.values()))
     assert link.status is PublicAccessLinkStatus.REVOKED
-    assert assignment.status is CardLinkAssignmentStatus.DETACHED
+    assert assignment.status is CardLinkAssignmentStatus.ACTIVE
 
 
 @pytest.mark.asyncio
@@ -1340,15 +1348,16 @@ async def test_revoked_lost_and_detached_cards_reject_later_activation() -> None
     )
     await lost_service.mark_lost(card_id=lost_card.id, now=NOW)
     assert next(iter(lost_links.links.values())).status is PublicAccessLinkStatus.REVOKED
-    with pytest.raises(CardNotFoundError):
+    with pytest.raises(CardTerminalStateError):
         await lost_service.activate_user_card(card_id=lost_card.id, user_id=OWNER_ID)
 
     detached_service, detached_card, _, _ = linked_card_service(
         link_status=PublicAccessLinkStatus.ACTIVE
     )
-    await detached_service.detach_card_link(card_id=detached_card.id, admin_id=ADMIN_ID, now=NOW)
-    with pytest.raises(CardNotFoundError):
-        await detached_service.activate_user_card(card_id=detached_card.id, user_id=OWNER_ID)
+    with pytest.raises(CardReassignmentNotAllowedError):
+        await detached_service.detach_card_link(
+            card_id=detached_card.id, admin_id=ADMIN_ID, now=NOW
+        )
 
 
 @pytest.mark.asyncio
@@ -1375,17 +1384,15 @@ async def test_link_lifecycle_races_are_idempotent_and_terminal_changes_win() ->
         service.revoke_card_link(card_id=linked_card.id, admin_id=ADMIN_ID, now=NOW),
     )
     assert next(iter(links.links.values())).status is PublicAccessLinkStatus.REVOKED
-    with pytest.raises(CardNotFoundError):
+    with pytest.raises(CardTerminalStateError):
         await service.activate_user_card(card_id=linked_card.id, user_id=OWNER_ID)
 
     detach_service, detach_card, detach_links, _ = linked_card_service(
         link_status=PublicAccessLinkStatus.DISABLED
     )
-    await asyncio.gather(
-        detach_service.activate_user_card(card_id=detach_card.id, user_id=OWNER_ID),
-        detach_service.detach_card_link(card_id=detach_card.id, admin_id=ADMIN_ID, now=NOW),
-    )
-    assert next(iter(detach_links.links.values())).status is PublicAccessLinkStatus.REVOKED
+    with pytest.raises(CardReassignmentNotAllowedError):
+        await detach_service.detach_card_link(card_id=detach_card.id, admin_id=ADMIN_ID, now=NOW)
+    assert next(iter(detach_links.links.values())).status is PublicAccessLinkStatus.DISABLED
 
     lost_service, lost_card, lost_links, _ = linked_card_service(
         link_status=PublicAccessLinkStatus.DISABLED

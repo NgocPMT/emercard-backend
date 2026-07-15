@@ -97,8 +97,6 @@ class EmergencyLookupService:
 
         if link is None:
             raise EmergencyProfileNotFoundError
-        if link.purpose is not PublicLinkPurpose.CARD:
-            raise EmergencyProfileNotFoundError
         if link.status is not PublicAccessLinkStatus.ACTIVE:
             raise EmergencyProfileNotFoundError
 
@@ -123,9 +121,12 @@ class EmergencyLookupService:
                 )
             except (InvalidIdentifierError, RepositoryError, PyMongoError, ValueError) as error:
                 raise EmergencyProfileServiceUnavailableError from error
-            if assignment is not None:
-                assignment_id = str(assignment.id)
-                card_id = str(assignment.card_id)
+            if assignment is None:
+                raise EmergencyProfileNotFoundError
+            assignment_id = str(assignment.id)
+            card_id = str(assignment.card_id)
+        # Production routes always inject the assignment repository; the
+        # optional branch preserves isolated legacy service callers.
 
         return PublicProfileLookupResult(
             profile=public_profile,
