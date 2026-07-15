@@ -215,7 +215,7 @@ class CardLinkAssignmentRepository:
     async def with_transaction(self, operation: Callable[[Any], Awaitable[Any]]) -> Any:
         client = self._database.client
         try:
-            async with client.start_session() as session, session.start_transaction():
+            async with client.start_session() as session, await session.start_transaction():
                 return await operation(session)
         except OperationFailure as error:
             transaction_error = (

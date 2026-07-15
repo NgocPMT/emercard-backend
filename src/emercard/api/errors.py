@@ -1,5 +1,6 @@
 """Safe, consistent HTTP error responses."""
 
+import logging
 from typing import Any
 
 from fastapi import Request
@@ -40,6 +41,8 @@ from emercard.modules.public_links.errors import (
     PublicProfilePendingError,
     PublicProfileRevokedError,
 )
+
+logger = logging.getLogger("emercard.request")
 
 
 def _request_id(request: Request) -> str:
@@ -276,7 +279,15 @@ def validation_exception_handler(request: Request, exc: RequestValidationError) 
 
 
 def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    del exc
+    logger.exception(
+        "unhandled request exception",
+        extra={
+            "request_id": _request_id(request),
+            "method": request.method,
+            "path": request.url.path,
+        },
+        exc_info=exc,
+    )
     details = {"exception": "internal_server_error"} if request.app.state.settings.debug else None
     return JSONResponse(
         status_code=500,

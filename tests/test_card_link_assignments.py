@@ -168,7 +168,7 @@ async def test_repository_with_transaction_runs_operation_in_a_session() -> None
         def __init__(self) -> None:
             self.started = False
 
-        def start_transaction(self) -> FakeTransaction:
+        async def start_transaction(self) -> FakeTransaction:
             self.started = True
             return FakeTransaction()
 
