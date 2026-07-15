@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     mongodb_idempotency_collection: str = "idempotency_keys"
     mongodb_public_access_links_collection: str = "public_access_links"
     mongodb_card_link_assignments_collection: str = "card_link_assignments"
+    mongodb_location_alert_audits_collection: str = "location_alert_audits"
     mongodb_test_database_prefix: str = "emercard_test"
     mongodb_index_initialization_mode: IndexInitializationMode = "disabled"
 
@@ -62,6 +63,17 @@ class Settings(BaseSettings):
     emergency_token_max_length: Annotated[int, Field(ge=43, le=512)] = 128
     emergency_rate_limit_window_seconds: Annotated[int, Field(ge=1, le=3_600)] = 60
     emergency_rate_limit_burst: Annotated[int, Field(ge=1, le=10_000)] = 30
+    location_alert_token_cooldown_seconds: Annotated[int, Field(ge=1, le=86_400)] = 300
+    location_alert_ip_window_seconds: Annotated[int, Field(ge=1, le=86_400)] = 3_600
+    location_alert_ip_burst: Annotated[int, Field(ge=1, le=100)] = 5
+    location_alert_audit_retention_seconds: Annotated[int, Field(ge=60, le=31_536_000)] = 2_592_000
+    location_provider_timeout_seconds: Annotated[float, Field(gt=0, le=60)] = 5.0
+    email_provider_timeout_seconds: Annotated[float, Field(gt=0, le=60)] = 10.0
+    google_geocoding_api_key: SecretStr | None = None
+    brevo_api_key: SecretStr | None = None
+    brevo_sender_email: str = "alerts@example.com"
+    brevo_sender_name: str = "EmerCard"
+    brevo_reply_to_email: str | None = None
 
     # Reserved for the authentication stage; no authentication is implemented here.
     auth_secret: SecretStr | None = None
@@ -87,6 +99,7 @@ class Settings(BaseSettings):
     contact_name_max_length: Annotated[int, Field(ge=1, le=500)] = 100
     contact_relationship_max_length: Annotated[int, Field(ge=1, le=500)] = 80
     contact_phone_max_length: Annotated[int, Field(ge=1, le=100)] = 32
+    contact_email_max_length: Annotated[int, Field(ge=3, le=254)] = 254
     birth_year_min: Annotated[int, Field(ge=1800, le=2100)] = 1900
     birth_year_max: Annotated[int, Field(ge=1800, le=2100)] = 2026
 
@@ -106,6 +119,7 @@ class Settings(BaseSettings):
         "mongodb_idempotency_collection",
         "mongodb_public_access_links_collection",
         "mongodb_card_link_assignments_collection",
+        "mongodb_location_alert_audits_collection",
         "mongodb_test_database_prefix",
         "auth_cookie_name",
     )
@@ -140,6 +154,24 @@ class Settings(BaseSettings):
             raise ValueError("public base URL must not contain a query or fragment")
         if parsed.path.rstrip("/") != "/e":
             raise ValueError("public base URL must end with /e")
+        return normalized
+
+    @field_validator("brevo_sender_email", "brevo_reply_to_email")
+    @classmethod
+    def validate_mail_address(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if not normalized or "@" not in normalized or " " in normalized:
+            raise ValueError("mail address must be valid")
+        return normalized
+
+    @field_validator("brevo_sender_name")
+    @classmethod
+    def validate_sender_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("brevo_sender_name must not be empty")
         return normalized
 
     @field_validator("auth_cookie_domain")
@@ -210,6 +242,13 @@ class Settings(BaseSettings):
                 raise ValueError("frontend_base_url must be included in cors_origins")
             if not self.public_profile_base_url.startswith("https://"):
                 raise ValueError("public_profile_base_url must use https for deployments")
+            google_key = self.google_geocoding_api_key
+            if google_key is None or not google_key.get_secret_value():
+                raise ValueError(
+                    "google_geocoding_api_key is required for deployments"
+                )
+            if self.brevo_api_key is None or not self.brevo_api_key.get_secret_value():
+                raise ValueError("brevo_api_key is required for deployments")
         if self.auth_cookie_same_site == "none" and not self.auth_cookie_secure:
             raise ValueError("auth_cookie_secure must be true when auth_cookie_same_site is 'none'")
         return self

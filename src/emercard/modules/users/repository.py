@@ -67,10 +67,14 @@ class UserRepository:
         role: UserRole = "user",
         now: datetime | None = None,
     ) -> UserDocument:
+        canonical_email = canonicalize_email(email)
+        if await self.find_by_email(canonical_email) is not None:
+            raise RepositoryConflictError("user email already exists")
+
         timestamp = now or utc_now()
         document = UserDocument(
             _id=ObjectId(),
-            email=canonicalize_email(email),
+            email=canonical_email,
             password_hash=password_hash,
             role=role,
             created_at=timestamp,

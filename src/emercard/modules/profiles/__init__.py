@@ -8,6 +8,7 @@ from emercard.modules.profiles.exceptions import (
 from emercard.modules.profiles.models import (
     AuthenticatedProfileOutput,
     BloodType,
+    EmergencyContactAuthenticated,
     EmergencyContactDocument,
     EmergencyContactInput,
     EmergencyContactPublic,
@@ -33,6 +34,7 @@ from emercard.modules.profiles.service import ProfileService
 
 __all__ = [
     "AuthenticatedProfileOutput",
+    "EmergencyContactAuthenticated",
     "BloodType",
     "EmergencyContactDocument",
     "EmergencyContactInput",

@@ -30,6 +30,8 @@ CARDS_ENCODING_INDEX = "cards_encoding_state"
 CUSTODY_EVENT_CARD_INDEX = "card_custody_events_card_created"
 CUSTODY_EVENT_OWNER_INDEX = "card_custody_events_owner_created"
 IDEMPOTENCY_KEY_INDEX = "idempotency_keys_operation_unique"
+LOCATION_ALERT_AUDIT_TTL_INDEX = "location_alert_audits_expires"
+LOCATION_ALERT_AUDIT_LINK_INDEX = "location_alert_audits_link_created"
 
 
 def collection_indexes(settings: Settings) -> dict[str, list[IndexModel]]:
@@ -127,6 +129,17 @@ def collection_indexes(settings: Settings) -> dict[str, list[IndexModel]]:
                 [("operation_key", ASCENDING)],
                 name=IDEMPOTENCY_KEY_INDEX,
                 unique=True,
+            ),
+        ],
+        settings.mongodb_location_alert_audits_collection: [
+            IndexModel(
+                [("expires_at", ASCENDING)],
+                name=LOCATION_ALERT_AUDIT_TTL_INDEX,
+                expireAfterSeconds=0,
+            ),
+            IndexModel(
+                [("link_id", ASCENDING), ("created_at", ASCENDING)],
+                name=LOCATION_ALERT_AUDIT_LINK_INDEX,
             ),
         ],
     }

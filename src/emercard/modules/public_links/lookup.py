@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Protocol
 
 from bson.errors import InvalidId
@@ -12,11 +13,12 @@ from pymongo.errors import PyMongoError
 from emercard.db.repositories import InvalidIdentifierError, RepositoryError
 from emercard.modules.card_link_assignments.models import CardLinkAssignmentDocument
 from emercard.modules.cards.identity import hash_public_token
-from emercard.modules.profiles.models import ProfileDocument, to_public_profile
+from emercard.modules.profiles.models import ProfileDocument, profile_state, to_public_profile
 from emercard.modules.public_links.errors import (
     PublicProfileDisabledError,
     PublicProfileExpiredError,
     PublicProfileNotFoundError,
+    PublicProfileNotReadyError,
     PublicProfilePendingError,
     PublicProfileRevokedError,
     PublicProfileServiceUnavailableError,
@@ -44,6 +46,15 @@ class CardLinkAssignmentRepositoryProtocol(Protocol):
     async def find_active_by_public_access_link_id(
         self, public_access_link_id: ObjectId | str, *, session: object | None = None
     ) -> CardLinkAssignmentDocument | None: ...
+
+
+@dataclass(frozen=True)
+class PrivatePublicProfileLookupResult:
+    """Internal token resolution result for server-side alert delivery."""
+
+    profile: ProfileDocument
+    link_id: str
+    card_id: str | None
 
 
 class PublicProfileLookupService:
@@ -123,6 +134,59 @@ class PublicProfileLookupService:
             link_id=str(link.id),
             purpose=link.purpose,
             assignment_id=assignment_id,
+            card_id=card_id,
+        )
+
+    async def lookup_private(self, raw_token: str) -> PrivatePublicProfileLookupResult:
+        """Resolve the same public contract while retaining private contact fields."""
+
+        if not self._valid_token_shape(raw_token):
+            raise PublicProfileNotFoundError
+        try:
+            token_hash = hash_public_token(raw_token)
+            link = await self._link_repository.find_by_token_hash(token_hash)
+        except (RepositoryError, PyMongoError) as error:
+            raise PublicProfileServiceUnavailableError from error
+        except (InvalidIdentifierError, InvalidId, ValueError) as error:
+            raise PublicProfileNotFoundError from error
+        if link is None:
+            raise PublicProfileNotFoundError
+        if link.status is PublicAccessLinkStatus.PENDING:
+            raise PublicProfilePendingError
+        if link.status is PublicAccessLinkStatus.DISABLED:
+            raise PublicProfileDisabledError
+        if link.status is PublicAccessLinkStatus.REVOKED:
+            raise PublicProfileRevokedError
+        if link.status is PublicAccessLinkStatus.EXPIRED:
+            raise PublicProfileExpiredError
+        try:
+            profile = await self._profile_repository.find_by_id(link.profile_id)
+        except (RepositoryError, PyMongoError) as error:
+            raise PublicProfileServiceUnavailableError from error
+        except (InvalidIdentifierError, InvalidId, ValueError) as error:
+            raise PublicProfileNotFoundError from error
+        if profile is None:
+            raise PublicProfileNotFoundError
+        try:
+            if profile_state(profile) != "ready_to_publish":
+                raise PublicProfileNotReadyError
+        except ValueError as error:
+            raise PublicProfileNotFoundError from error
+
+        card_id = None
+        if self._assignment_repository is not None:
+            try:
+                assignment = await self._assignment_repository.find_active_by_public_access_link_id(
+                    link.id
+                )
+            except (RepositoryError, PyMongoError) as error:
+                raise PublicProfileServiceUnavailableError from error
+            if assignment is None:
+                raise PublicProfileNotFoundError
+            card_id = str(assignment.card_id)
+        return PrivatePublicProfileLookupResult(
+            profile=profile,
+            link_id=str(link.id),
             card_id=card_id,
         )
 

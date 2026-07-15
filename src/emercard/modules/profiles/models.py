@@ -80,6 +80,17 @@ def _normalize_medical_list(value: list[str]) -> list[str]:
 
 
 _PHONE_PATTERN = re.compile(r"^0\d{9}$")
+_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _canonicalize_contact_email(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    maximum = get_settings().contact_email_max_length
+    if len(normalized) > maximum or not _EMAIL_PATTERN.fullmatch(normalized):
+        raise ValueError("Email không hợp lệ")
+    return normalized
 
 
 class EmergencyContactInput(ProfileModel):
@@ -88,6 +99,7 @@ class EmergencyContactInput(ProfileModel):
     name: str
     relationship: str
     phone: str
+    email: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -119,6 +131,11 @@ class EmergencyContactInput(ProfileModel):
             raise ValueError("Số điện thoại phải có đúng 10 chữ số và bắt đầu bằng 0")
         return normalized
 
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str | None) -> str | None:
+        return _canonicalize_contact_email(value)
+
 
 class EmergencyContactDocument(ProfileModel):
     """Embedded persistence contact, including legacy phone values."""
@@ -127,6 +144,7 @@ class EmergencyContactDocument(ProfileModel):
     name: str
     relationship: str
     phone: str
+    email: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -146,6 +164,11 @@ class EmergencyContactDocument(ProfileModel):
             field_name="mối quan hệ",
         )
 
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str | None) -> str | None:
+        return _canonicalize_contact_email(value)
+
 
 def _empty_document_contacts() -> list[EmergencyContactDocument]:
     return []
@@ -161,6 +184,15 @@ class EmergencyContactPublic(ProfileModel):
     name: str
     relationship: str
     phone: str
+
+
+class EmergencyContactAuthenticated(ProfileModel):
+    """Owner-only contact projection, including the private email address."""
+
+    name: str
+    relationship: str
+    phone: str
+    email: str | None = None
 
 
 class PublicAccessDocument(ProfileModel):
@@ -196,6 +228,7 @@ class ProfileDocument(ProfileModel):
     important_conditions: MedicalList
     critical_medications: MedicalList
     emergency_note: str | None = None
+    location_alerts_enabled: bool = False
     emergency_contacts: list[EmergencyContactDocument] = Field(
         default_factory=_empty_document_contacts
     )
@@ -268,6 +301,7 @@ class ProfileUpsertInput(ProfileModel):
     important_conditions: MedicalList
     critical_medications: MedicalList
     emergency_note: str | None = None
+    location_alerts_enabled: bool = False
     emergency_contacts: list[EmergencyContactInput] = Field(default_factory=_empty_input_contacts)
 
     @field_validator("display_name")
@@ -337,6 +371,7 @@ class ProfileDashboardOutput(ProfileModel):
     important_conditions: list[str]
     critical_medications: list[str]
     emergency_note: str | None
+    location_alerts_enabled: bool
     emergency_contacts: list[EmergencyContactDocument]
     public_access: PublicAccessDocument
     state: ProfileState
@@ -355,7 +390,8 @@ class AuthenticatedProfileOutput(ProfileModel):
     important_conditions: list[str]
     critical_medications: list[str]
     emergency_note: str | None
-    emergency_contacts: list[EmergencyContactPublic]
+    location_alerts_enabled: bool = False
+    emergency_contacts: list[EmergencyContactAuthenticated]
     created_at: UtcDateTime
     updated_at: UtcDateTime
 
@@ -390,6 +426,18 @@ class PublicProfileOutput(ProfileModel):
     emergency_note: str | None
     emergency_contacts: list[EmergencyContactPublic]
     profile_updated_at: UtcDateTime
+
+
+def _authenticated_contacts(profile: ProfileDocument) -> list[EmergencyContactAuthenticated]:
+    return [
+        EmergencyContactAuthenticated(
+            name=contact.name,
+            relationship=contact.relationship,
+            phone=contact.phone,
+            email=contact.email,
+        )
+        for contact in profile.emergency_contacts
+    ]
 
 
 def _public_contacts(profile: ProfileDocument) -> list[EmergencyContactPublic]:
@@ -475,7 +523,8 @@ def to_authenticated_profile(profile: ProfileDocument) -> AuthenticatedProfileOu
         important_conditions=list(profile.important_conditions),
         critical_medications=list(profile.critical_medications),
         emergency_note=profile.emergency_note,
-        emergency_contacts=_public_contacts(profile),
+        location_alerts_enabled=profile.location_alerts_enabled,
+        emergency_contacts=_authenticated_contacts(profile),
         created_at=profile.created_at,
         updated_at=profile.updated_at,
     )

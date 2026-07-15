@@ -54,6 +54,7 @@ def raw_profile(*, token: str | None = None, enabled: bool = False) -> dict[str,
 @pytest.mark.asyncio
 async def test_user_repository_stores_bson_object_id_for_new_users() -> None:
     database, collection = fake_database()
+    collection.find_one = AsyncMock(return_value=None)
     collection.insert_one = AsyncMock()
     repository = UserRepository(database, Settings(environment="test"))
 
@@ -62,6 +63,29 @@ async def test_user_repository_stores_bson_object_id_for_new_users() -> None:
     inserted = collection.insert_one.await_args.args[0]
     assert inserted["_id"] == user.id
     assert isinstance(inserted["_id"], ObjectId)
+
+
+@pytest.mark.asyncio
+async def test_user_repository_rejects_existing_email_without_database_index() -> None:
+    database, collection = fake_database()
+    collection.find_one = AsyncMock(
+        return_value={
+            "_id": USER_ID,
+            "email": "person@example.com",
+            "password_hash": "argon2-hash",
+            "role": "user",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+    )
+    collection.insert_one = AsyncMock()
+    repository = UserRepository(database, Settings(environment="test"))
+
+    with pytest.raises(RepositoryConflictError):
+        await repository.create(email=" Person@Example.COM ", password_hash="another-hash")
+
+    assert collection.find_one.await_args.args[0] == {"email": "person@example.com"}
+    collection.insert_one.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from emercard.modules.profiles import (
     PublicProfileOutput,
     profile_readiness,
     profile_state,
+    to_authenticated_profile,
 )
 from emercard.modules.users import (
     UserDocument,
@@ -142,6 +143,28 @@ def test_contact_phone_must_be_a_ten_digit_vietnamese_number(phone: str) -> None
         EmergencyContactInput(name="Alex Example", relationship="Friend", phone=phone)
 
 
+def test_contact_email_is_canonicalized_and_optional_for_legacy_contacts() -> None:
+    contact = EmergencyContactInput(
+        name="Alex Example",
+        relationship="Friend",
+        phone="0901234567",
+        email=" Contact@Example.COM ",
+    )
+    assert contact.email == "contact@example.com"
+    assert EmergencyContactDocument(
+        name="Alex Example",
+        relationship="Friend",
+        phone="0901234567",
+    ).email is None
+    with pytest.raises(ValidationError):
+        EmergencyContactInput(
+            name="Alex Example",
+            relationship="Friend",
+            phone="0901234567",
+            email="not-an-email",
+        )
+
+
 def test_legacy_profile_phone_can_be_read_without_relaxing_new_input_validation() -> None:
     legacy_contact = EmergencyContactDocument(
         name="Alex Example",
@@ -234,6 +257,15 @@ def test_public_output_is_an_explicit_allowlist() -> None:
     assert "user_id" not in serialized
     assert "token" not in serialized
     assert "id" not in serialized["emergency_contacts"][0]
+    assert "email" not in serialized["emergency_contacts"][0]
+
+    owner = to_authenticated_profile(_profile(emergency_contacts=[{
+        "name": "Sam Example",
+        "relationship": "Friend",
+        "phone": "0901234567",
+        "email": "sam@example.com",
+    }]))
+    assert owner.emergency_contacts[0].email == "sam@example.com"
 
 
 def test_enabled_public_access_requires_token_and_publication_timestamp() -> None:

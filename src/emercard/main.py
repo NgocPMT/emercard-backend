@@ -31,6 +31,7 @@ from emercard.db import Database, initialize_indexes
 from emercard.modules.auth.exceptions import AuthError
 from emercard.modules.cards.errors import CardError
 from emercard.modules.emergency.errors import EmergencyLookupError
+from emercard.modules.location_alerts import LocationAlertLimiter, LocationAlertService
 from emercard.modules.profiles.exceptions import ProfileError
 from emercard.modules.public_links.errors import PublicProfileError
 
@@ -59,6 +60,7 @@ def create_app(
     emergency_rate_limiter: Any | None = None,
     public_access_link_repository: Any | None = None,
     card_link_assignment_repository: Any | None = None,
+    location_alert_service: LocationAlertService | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     logging.getLogger("emercard.request").setLevel(app_settings.log_level)
@@ -74,6 +76,11 @@ def create_app(
     app.state.emergency_rate_limiter = emergency_rate_limiter or EmergencyRateLimiter(
         window_seconds=app_settings.emergency_rate_limit_window_seconds,
         burst=app_settings.emergency_rate_limit_burst,
+    )
+    app.state.location_alert_limiter = LocationAlertLimiter(
+        token_cooldown_seconds=app_settings.location_alert_token_cooldown_seconds,
+        ip_window_seconds=app_settings.location_alert_ip_window_seconds,
+        ip_burst=app_settings.location_alert_ip_burst,
     )
     if auth_repository is not None:
         app.state.auth_repository = auth_repository
@@ -93,6 +100,8 @@ def create_app(
         app.state.public_access_link_repository = public_access_link_repository
     if card_link_assignment_repository is not None:
         app.state.card_link_assignment_repository = card_link_assignment_repository
+    if location_alert_service is not None:
+        app.state.location_alert_service = location_alert_service
 
     app.add_middleware(
         CORSMiddleware,

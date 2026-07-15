@@ -182,6 +182,10 @@ def _redact_access_path(path: str, route_templates: dict[str, str]) -> str:
         if not path.startswith(prefix):
             continue
         remainder = path[len(prefix) :].rstrip("/")
+        if remainder.endswith("/location-alert"):
+            token = remainder[: -len("/location-alert")].rstrip("/")
+            if token and "/" not in token and "?" not in token and "#" not in token:
+                return f"{template}/location-alert"
         if remainder and "/" not in remainder and "?" not in remainder and "#" not in remainder:
             return template
     return path
