@@ -57,6 +57,30 @@ class CardAssignmentTargetInvalidError(CardError):
     """The requested account cannot receive an administrative card assignment."""
 
 
+class CardDirectOwnershipError(CardError):
+    """Direct card-user ownership mutations are retired from the link-first path."""
+
+
+class CardLinkNotBoundError(CardError):
+    """The card has no current profile-link binding."""
+
+
+class CardProfileLinkInvalidError(CardError):
+    """The link is not attached to a valid profile."""
+
+
+class CardLinkRebindTargetInvalidError(CardError):
+    """The requested rebind target is not a pending profile link."""
+
+
+class CardLinkTerminalError(CardError):
+    """The attached link has reached a terminal lifecycle state."""
+
+
+class CardPostDeliveryRebindError(CardError):
+    """A delivered card cannot be rebound or detached."""
+
+
 class CardReassignmentNotAllowedError(CardError):
     """The card cannot be corrected after issuance or activation."""
 

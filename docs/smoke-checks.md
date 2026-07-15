@@ -29,3 +29,14 @@ curl -i http://localhost:8000/ready
 ```
 
 The container API uses `mongodb://mongodb:27017`; a host-run API uses `mongodb://localhost:27017`. Do not interchange these values.
+
+## Link-first API contract
+
+After the API is ready, inspect the generated contract:
+
+```bash
+curl -fsS http://localhost:8000/openapi.json \
+  | jq -e '.paths["/api/v1/admin/cards/{card_id}/link/attach"]'
+```
+
+The contract must expose profile-link binding and lifecycle routes, and must not expose the removed direct assignment, card-local provision/reprovision, or link-detach routes. Raw tokens should appear only in the one-time profile-link creation response, never in management responses or logs.

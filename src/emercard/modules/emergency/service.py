@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Protocol, cast
+from typing import Protocol
 
 from bson.objectid import ObjectId
 from pymongo.errors import PyMongoError
@@ -11,7 +11,6 @@ from pymongo.errors import PyMongoError
 from emercard.db.repositories import InvalidIdentifierError, RepositoryError
 from emercard.modules.card_link_assignments.models import CardLinkAssignmentDocument
 from emercard.modules.cards.identity import hash_public_token
-from emercard.modules.cards.models import CardDocument
 from emercard.modules.emergency.errors import (
     EmergencyProfileNotFoundError,
     EmergencyProfileServiceUnavailableError,
@@ -24,7 +23,6 @@ from emercard.modules.profiles.models import (
 from emercard.modules.public_links.models import (
     PublicAccessLinkDocument,
     PublicAccessLinkStatus,
-    PublicLinkPurpose,
     PublicProfileLookupResult,
 )
 
@@ -44,12 +42,6 @@ class CardLinkAssignmentRepositoryProtocol(Protocol):
     async def find_active_by_public_access_link_id(
         self, public_access_link_id: ObjectId | str, *, session: object | None = None
     ) -> CardLinkAssignmentDocument | None: ...
-
-
-class LegacyCardTokenRepositoryProtocol(Protocol):
-    async def find_publicly_resolvable_by_token_hash(
-        self, token_hash: str, *, session: object | None = None
-    ) -> CardDocument | None: ...
 
 
 class EmergencyLookupService:
@@ -76,20 +68,6 @@ class EmergencyLookupService:
 
         token_hash = hash_public_token(raw_token)
 
-        legacy_resolver = getattr(
-            self._link_repository, "find_publicly_resolvable_by_token_hash", None
-        )
-        if callable(legacy_resolver):
-            try:
-                legacy_card = await cast(
-                    LegacyCardTokenRepositoryProtocol, self._link_repository
-                ).find_publicly_resolvable_by_token_hash(token_hash)
-            except (InvalidIdentifierError, RepositoryError, PyMongoError, ValueError) as error:
-                raise EmergencyProfileServiceUnavailableError from error
-            if legacy_card is None:
-                raise EmergencyProfileNotFoundError
-            return await self._lookup_legacy_card(legacy_card)
-
         try:
             link = await self._link_repository.find_by_token_hash(token_hash)
         except (InvalidIdentifierError, RepositoryError, PyMongoError, ValueError) as error:
@@ -112,54 +90,23 @@ class EmergencyLookupService:
         except ValueError as error:
             raise EmergencyProfileNotFoundError from error
 
-        assignment_id = None
-        card_id = None
-        if self._assignment_repository is not None:
-            try:
-                assignment = await self._assignment_repository.find_active_by_public_access_link_id(
-                    link.id
-                )
-            except (InvalidIdentifierError, RepositoryError, PyMongoError, ValueError) as error:
-                raise EmergencyProfileServiceUnavailableError from error
-            if assignment is None:
-                raise EmergencyProfileNotFoundError
-            assignment_id = str(assignment.id)
-            card_id = str(assignment.card_id)
-        # Production routes always inject the assignment repository; the
-        # optional branch preserves isolated legacy service callers.
+        if self._assignment_repository is None:
+            raise EmergencyProfileNotFoundError
+        try:
+            assignment = await self._assignment_repository.find_active_by_public_access_link_id(
+                link.id
+            )
+        except (InvalidIdentifierError, RepositoryError, PyMongoError, ValueError) as error:
+            raise EmergencyProfileServiceUnavailableError from error
+        if assignment is None:
+            raise EmergencyProfileNotFoundError
 
         return PublicProfileLookupResult(
             profile=public_profile,
             link_id=str(link.id),
             purpose=link.purpose,
-            assignment_id=assignment_id,
-            card_id=card_id,
-        )
-
-    async def _lookup_legacy_card(self, card: CardDocument) -> PublicProfileLookupResult:
-        if card.owner_id is None:
-            raise EmergencyProfileNotFoundError
-        if not card.is_current or card.issued_at is None or card.encoding_verified_at is None:
-            raise EmergencyProfileNotFoundError
-
-        try:
-            profile = await self._profile_repository.find_by_user_id(card.owner_id)
-        except (InvalidIdentifierError, RepositoryError, PyMongoError, ValueError) as error:
-            raise EmergencyProfileServiceUnavailableError from error
-
-        if profile is None or profile_readiness(profile).status != "ready":
-            raise EmergencyProfileNotFoundError
-        try:
-            public_profile = to_public_profile(profile)
-        except ValueError as error:
-            raise EmergencyProfileNotFoundError from error
-
-        return PublicProfileLookupResult(
-            profile=public_profile,
-            link_id=str(card.id),
-            purpose=PublicLinkPurpose.CARD,
-            assignment_id=None,
-            card_id=str(card.id),
+            assignment_id=str(assignment.id),
+            card_id=str(assignment.card_id),
         )
 
     def _valid_token_shape(self, raw_token: str) -> bool:

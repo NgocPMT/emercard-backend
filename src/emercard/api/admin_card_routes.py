@@ -14,7 +14,6 @@ from emercard.api.auth_routes import require_admin
 from emercard.modules.card_link_assignments import CardLinkAssignmentRepository
 from emercard.modules.cards import (
     AdminCardOutput,
-    AssignCardInput,
     CardListOutput,
     CardProvisioningOutput,
     CardRepository,
@@ -26,7 +25,6 @@ from emercard.modules.cards import (
     LinkProvisioningOutput,
     ProvisioningOutput,
     PublicLinkListOutput,
-    ReassignCardInput,
     SafeUserOutput,
     to_admin_card,
     to_public_link_summary,
@@ -49,50 +47,6 @@ def build_admin_card_router() -> APIRouter:
     ) -> AdminCardOutput:
         card = await service.create_blank_card(operation_key=idempotency_key.strip())
         return to_admin_card(card)
-
-    @router.post(
-        "/cards/{card_id}/provision-link",
-        response_model=CardProvisioningOutput,
-        status_code=200,
-    )
-    async def provision_link(  # pyright: ignore[reportUnusedFunction]
-        card_id: str,
-        response: Response,
-        _: CurrentUserOutput = Depends(require_admin),  # noqa: B008
-        service: CardService = Depends(get_card_service),  # noqa: B008
-    ) -> CardProvisioningOutput:
-        result = await service.provision_link(card_id=card_id)
-        response.headers["Cache-Control"] = "no-store"
-        card, link, assignment = await service.describe_admin_card(card_id=card_id)
-        return CardProvisioningOutput(
-            card=to_admin_card(card, link=link, assignment=assignment),
-            provisioning=ProvisioningOutput(
-                public_token=result.public_token,
-                public_url=result.public_url,
-            ),
-        )
-
-    @router.post(
-        "/cards/{card_id}/reprovision-link",
-        response_model=CardProvisioningOutput,
-        status_code=200,
-    )
-    async def reprovision_link(  # pyright: ignore[reportUnusedFunction]
-        card_id: str,
-        response: Response,
-        _: CurrentUserOutput = Depends(require_admin),  # noqa: B008
-        service: CardService = Depends(get_card_service),  # noqa: B008
-    ) -> CardProvisioningOutput:
-        result = await service.reprovision_link(card_id=card_id)
-        response.headers["Cache-Control"] = "no-store"
-        card, link, assignment = await service.describe_admin_card(card_id=card_id)
-        return CardProvisioningOutput(
-            card=to_admin_card(card, link=link, assignment=assignment),
-            provisioning=ProvisioningOutput(
-                public_token=result.public_token,
-                public_url=result.public_url,
-            ),
-        )
 
     @router.post("/cards/{card_id}/confirm-encoding", response_model=AdminCardOutput)
     async def confirm_encoding(  # pyright: ignore[reportUnusedFunction]
@@ -126,44 +80,6 @@ def build_admin_card_router() -> APIRouter:
             created_at=user.created_at,
             updated_at=user.updated_at,
         )
-
-    @router.post("/cards/{card_id}/assign", response_model=AdminCardOutput)
-    async def assign_card(  # pyright: ignore[reportUnusedFunction]
-        card_id: str,
-        payload: AssignCardInput,
-        current_admin: CurrentUserOutput = Depends(require_admin),  # noqa: B008
-        service: CardService = Depends(get_card_service),  # noqa: B008
-    ) -> AdminCardOutput:
-        await service.assign_verified_to_user(
-            card_id=card_id,
-            user_id=payload.user_id,
-            admin_id=current_admin.id,
-        )
-        return await _admin_card_output(service, card_id)
-
-    @router.post("/cards/{card_id}/reassign", response_model=AdminCardOutput)
-    async def reassign_card(  # pyright: ignore[reportUnusedFunction]
-        card_id: str,
-        payload: ReassignCardInput,
-        current_admin: CurrentUserOutput = Depends(require_admin),  # noqa: B008
-        service: CardService = Depends(get_card_service),  # noqa: B008
-    ) -> AdminCardOutput:
-        await service.reassign_before_issue(
-            card_id=card_id,
-            new_owner_id=payload.new_owner_id,
-            admin_id=current_admin.id,
-            reason=payload.reason,
-        )
-        return await _admin_card_output(service, card_id)
-
-    @router.post("/cards/{card_id}/unassign", response_model=AdminCardOutput)
-    async def unassign_card(  # pyright: ignore[reportUnusedFunction]
-        card_id: str,
-        current_admin: CurrentUserOutput = Depends(require_admin),  # noqa: B008
-        service: CardService = Depends(get_card_service),  # noqa: B008
-    ) -> AdminCardOutput:
-        await service.unassign_before_issue(card_id=card_id, admin_id=current_admin.id)
-        return await _admin_card_output(service, card_id)
 
     @router.post("/cards/{card_id}/issue", response_model=AdminCardOutput)
     async def issue_card(  # pyright: ignore[reportUnusedFunction]
@@ -323,20 +239,6 @@ def build_admin_card_router() -> APIRouter:
             card_id=card_id,
             public_access_link_id=payload.public_access_link_id,
             admin_id=current_admin.id,
-        )
-        return await _admin_card_output(service, card_id)
-
-    @router.post("/cards/{card_id}/link/detach", response_model=AdminCardOutput)
-    async def detach_card_link(  # pyright: ignore[reportUnusedFunction]
-        card_id: str,
-        payload: LinkDetachInput,
-        current_admin: CurrentUserOutput = Depends(require_admin),  # noqa: B008
-        service: CardService = Depends(get_card_service),  # noqa: B008
-    ) -> AdminCardOutput:
-        await service.detach_card_link(
-            card_id=card_id,
-            admin_id=current_admin.id,
-            reason=payload.reason,
         )
         return await _admin_card_output(service, card_id)
 

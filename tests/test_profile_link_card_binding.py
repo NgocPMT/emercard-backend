@@ -5,7 +5,12 @@ from bson import ObjectId
 
 from emercard.modules.card_link_assignments import CardLinkAssignmentStatus
 from emercard.modules.card_link_assignments.models import CardLinkAssignmentDocument
-from emercard.modules.cards import CardLinkAlreadyProvisionedError, CardService, CardStatus
+from emercard.modules.cards import (
+    CardDirectOwnershipError,
+    CardLinkAlreadyProvisionedError,
+    CardService,
+    CardStatus,
+)
 from emercard.modules.cards.identity import (
     generate_public_token,
     generate_serial,
@@ -46,6 +51,20 @@ class MemoryCardRepository:
 
     async def find_by_id(self, card_id: ObjectId | str) -> CardDocument | None:
         return self.card if str(self.card.id) == str(card_id) else None
+
+    async def mark_link_bound(self, *, card_id, now=None, session=None):
+        del session
+        if self.card.id != ObjectId(card_id) or self.card.status is not CardStatus.UNASSIGNED:
+            return None
+        self.card = self.card.model_copy(
+            update={
+                "status": CardStatus.ASSIGNED,
+                "is_current": True,
+                "assigned_at": now or NOW,
+                "updated_at": now or NOW,
+            }
+        )
+        return self.card
 
     async def with_transaction(self, operation):
         return await operation(None)
@@ -158,7 +177,7 @@ def pending_link() -> PublicAccessLinkDocument:
         {
             "_id": ObjectId(),
             "profile_id": PROFILE_ID,
-            "purpose": PublicLinkPurpose.STANDALONE,
+            "purpose": PublicLinkPurpose.CARD,
             "token_hash": hash_public_token(generate_public_token()),
             "status": PublicAccessLinkStatus.PENDING,
             "created_at": NOW,
@@ -210,6 +229,8 @@ async def test_admin_binds_pending_profile_link_and_rebind_revokes_previous_link
     )
 
     assert links.links[first.id].status is PublicAccessLinkStatus.REVOKED
+    assert cards.card.status is CardStatus.ASSIGNED
+    assert cards.card.owner_id is None
     current = [
         item
         for item in assignments.assignments.values()
@@ -226,3 +247,36 @@ async def test_card_local_provisioning_is_rejected() -> None:
 
     with pytest.raises(CardLinkAlreadyProvisionedError):
         await service.provision_link(card_id=card.id, now=NOW)
+
+
+@pytest.mark.asyncio
+async def test_link_first_service_rejects_direct_owner_mutations() -> None:
+    card = blank_card()
+    service = CardService(
+        MemoryCardRepository(card),
+        MemoryUserRepository(),
+        profile_repository=MemoryProfileRepository(profile()),
+        public_access_link_repository=MemoryLinkRepository(pending_link()),
+        card_link_assignment_repository=MemoryAssignmentRepository(),
+    )
+
+    with pytest.raises(CardDirectOwnershipError):
+        await service.provision_unassigned(now=NOW)
+    with pytest.raises(CardDirectOwnershipError):
+        await service.assign_to_user(card_id=card.id, user_id=profile().user_id, now=NOW)
+    with pytest.raises(CardDirectOwnershipError):
+        await service.assign_verified_to_user(
+            card_id=card.id, user_id=profile().user_id, admin_id=ADMIN_ID, now=NOW
+        )
+    with pytest.raises(CardDirectOwnershipError):
+        await service.reassign_before_issue(
+            card_id=card.id,
+            new_owner_id=profile().user_id,
+            admin_id=ADMIN_ID,
+            reason="assignment_error",
+            now=NOW,
+        )
+    with pytest.raises(CardDirectOwnershipError):
+        await service.unassign_before_issue(card_id=card.id, admin_id=ADMIN_ID, now=NOW)
+    with pytest.raises(CardDirectOwnershipError):
+        await service.transition(card_id=card.id, to_status=CardStatus.ACTIVE, now=NOW)

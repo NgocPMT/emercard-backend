@@ -16,7 +16,6 @@ from emercard.modules.auth.security import hash_password
 from emercard.modules.cards import (
     CardDocument,
     CardEncodingMismatchError,
-    CardLinkProvisioningResult,
     CardService,
     CardStatus,
     generate_serial,
@@ -83,17 +82,7 @@ def managed_card(token: str) -> CardDocument:
         ("GET", "/api/v1/admin/cards", None, {}),
         ("GET", "/api/v1/admin/users/lookup?email=user@example.com", None, {}),
         ("POST", "/api/v1/admin/cards", None, {"Idempotency-Key": "route-test"}),
-        ("POST", "/api/v1/admin/cards/card/provision-link", None, {}),
-        ("POST", "/api/v1/admin/cards/card/reprovision-link", None, {}),
         ("POST", "/api/v1/admin/cards/card/confirm-encoding", {"public_url": "x"}, {}),
-        ("POST", "/api/v1/admin/cards/card/assign", {"user_id": "user"}, {}),
-        (
-            "POST",
-            "/api/v1/admin/cards/card/reassign",
-            {"new_owner_id": "user", "reason": "assignment_error"},
-            {},
-        ),
-        ("POST", "/api/v1/admin/cards/card/unassign", None, {}),
         ("POST", "/api/v1/admin/cards/card/issue", None, {}),
         ("POST", "/api/v1/admin/cards/card/void", None, {}),
         ("POST", "/api/v1/admin/cards/card/lost", None, {}),
@@ -169,23 +158,8 @@ def test_admin_mutation_routes_return_safe_card_metadata() -> None:
     repository = admin_repository()
     card = managed_card("route-token")
     service = AsyncMock(spec=CardService)
-    service.provision_link = AsyncMock(
-        return_value=CardLinkProvisioningResult(
-            card=card,
-            public_token="route-token",
-            public_url="https://app.example/e/route-token",
-        )
-    )
-    service.reprovision_link = service.provision_link
     service.describe_admin_card = AsyncMock(return_value=(card, None, None))
-    for method in (
-        "confirm_encoding",
-        "assign_verified_to_user",
-        "reassign_before_issue",
-        "unassign_before_issue",
-        "issue",
-        "void",
-    ):
+    for method in ("confirm_encoding", "issue", "void"):
         setattr(service, method, AsyncMock(return_value=card))
     app = create_app(
         settings=settings(),
@@ -201,26 +175,15 @@ def test_admin_mutation_routes_return_safe_card_metadata() -> None:
             json={"email": "admin@example.com", "password": "password-123"},
         )
         responses = [
-            client.post(f"/api/v1/admin/cards/{card.id}/provision-link"),
-            client.post(f"/api/v1/admin/cards/{card.id}/reprovision-link"),
             client.post(
                 f"/api/v1/admin/cards/{card.id}/confirm-encoding",
                 json={"public_url": "https://app.example/e/route-token"},
             ),
-            client.post(
-                f"/api/v1/admin/cards/{card.id}/assign",
-                json={"user_id": str(ADMIN_ID)},
-            ),
-            client.post(
-                f"/api/v1/admin/cards/{card.id}/reassign",
-                json={"new_owner_id": str(ADMIN_ID), "reason": "assignment_error"},
-            ),
-            client.post(f"/api/v1/admin/cards/{card.id}/unassign"),
             client.post(f"/api/v1/admin/cards/{card.id}/issue"),
             client.post(f"/api/v1/admin/cards/{card.id}/void"),
         ]
 
-    assert [response.status_code for response in responses] == [200] * 8
+    assert [response.status_code for response in responses] == [200] * 3
     for response in responses:
         assert "token_hash" not in response.text
         assert "medical" not in response.text.lower()
@@ -288,17 +251,12 @@ def test_admin_card_errors_are_stable_and_do_not_leak_sensitive_input() -> None:
             "/api/v1/admin/cards/card/confirm-encoding",
             json={"public_url": "https://secret.example/token-value"},
         )
-        invalid_reason = client.post(
-            "/api/v1/admin/cards/card/reassign",
-            json={"new_owner_id": str(ADMIN_ID), "reason": "order_cancelled"},
-        )
         unknown_user = client.get("/api/v1/admin/users/lookup?email=missing@example.com")
         unknown_card = client.get("/api/v1/admin/cards/not-an-object-id")
 
     assert mismatch.status_code == 422
     assert mismatch.json()["error"]["code"] == "card.encoding_mismatch"
     assert "secret" not in mismatch.text.lower()
-    assert invalid_reason.status_code == 422
     assert unknown_user.status_code == 404
     assert unknown_user.json()["error"]["code"] == "user.not_found"
     assert unknown_card.status_code == 404
@@ -336,41 +294,3 @@ def test_admin_user_lookup_returns_only_safe_account_fields() -> None:
     assert response.json()["email"] == "person@example.com"
     assert "password" not in response.text.lower()
     assert "medical" not in response.text.lower()
-
-
-def test_provision_response_returns_raw_link_once_with_no_store() -> None:
-    repository = admin_repository()
-    card = managed_card("raw-token-for-test")
-    service = AsyncMock(spec=CardService)
-    service.provision_link = AsyncMock(
-        return_value=CardLinkProvisioningResult(
-            card=card,
-            public_token="raw-token-for-test",
-            public_url="https://app.example/e/raw-token-for-test",
-        )
-    )
-    service.describe_admin_card = AsyncMock(return_value=(card, None, None))
-    app = create_app(
-        settings=settings(),
-        database=FakeDatabase(ready=True),
-        auth_repository=repository,
-        profile_repository=InMemoryProfileRepository(),
-    )
-    app.dependency_overrides[get_card_service] = lambda: service
-
-    with TestClient(app) as client:
-        client.post(
-            "/api/v1/auth/login",
-            json={"email": "admin@example.com", "password": "password-123"},
-        )
-        response = client.post(f"/api/v1/admin/cards/{card.id}/provision-link")
-
-    assert response.status_code == 200
-    assert response.headers["cache-control"] == "no-store"
-    assert response.json()["provisioning"] == {
-        "public_token": "raw-token-for-test",
-        "public_url": "https://app.example/e/raw-token-for-test",
-    }
-    assert "token_hash" not in response.json()["card"]
-    assert "medical" not in response.text.lower()
-    service.provision_link.assert_awaited_once_with(card_id=str(card.id))

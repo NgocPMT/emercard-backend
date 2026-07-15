@@ -103,12 +103,12 @@ class CardDocument(CardModel):
             if self.is_current:
                 raise ValueError("void cards must be non-current")
         elif self.status in operational_statuses:
-            if self.owner_id is None or not self.is_current:
-                raise ValueError("assigned operational cards must have an owner and be current")
-        elif self.status in {CardStatus.LOST, CardStatus.REPLACED} and (
-            self.owner_id is None or self.is_current
-        ):
-            raise ValueError("lost and replaced cards must have an owner and be non-current")
+            # Link-first cards are owned by their current profile-link assignment;
+            # owner_id is retained only for legacy migration data.
+            if not self.is_current:
+                raise ValueError("assigned operational cards must be current")
+        elif self.status in {CardStatus.LOST, CardStatus.REPLACED} and self.is_current:
+            raise ValueError("lost and replaced cards must be non-current")
         if self.legacy_token_hash is None:
             # Link-first cards use the attached PublicAccessLink token instead of
             # persisting a card-local bearer hash. Physical encoding still records
@@ -125,8 +125,8 @@ class CardDocument(CardModel):
             raise ValueError("encoding verification requires an admin ID")
         if self.status is CardStatus.VOID and self.issued_at is not None:
             raise ValueError("void cards cannot be issued")
-        if self.issued_at is not None and self.owner_id is None:
-            raise ValueError("issued cards must have an owner")
+        # Link-first issued cards intentionally have no direct user owner. Their
+        # authorization relationship is the current card-link assignment.
         if self.id == self.replaces_card_id or self.id == self.replacement_card_id:
             raise ValueError("replacement references cannot point to the same card")
         return self

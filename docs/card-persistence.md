@@ -32,14 +32,14 @@ profile
 
 card
   -> zero or one current assignment to one link
-  -> custody history in card_custody_events
+  -> custody/delivery state and history in card_custody_events
 
 link
   -> zero or one card (pending links wait for admin binding)
   -> public access only after card binding, encoding verification, and delivery
 ```
 
-A public link is the anonymous access token for one profile. A link starts pending, whether its initial purpose is `card` or `standalone`; “standalone” means it is not yet bound to a physical card, not that it may be publicly active without one. Each link can bind to at most one card and each card can have at most one current link. The link’s profile is the source of public authorization; `CardDocument.owner_id` remains delivery/custody metadata, not the anonymous lookup source.
+A public link is the anonymous access token for one profile. A link starts pending, whether its initial purpose is `card` or `standalone`; “standalone” means it is not yet bound to a physical card, not that it may be publicly active without one. Each link can bind to at most one card and each card can have at most one current link. The link’s profile is the source of public and authenticated-card authorization; `CardDocument.owner_id` remains legacy delivery/custody metadata, not an access-control source. A correctly bound and issued link-first card may therefore be ownerless in the card document.
 
 ## Card identity
 
@@ -54,8 +54,8 @@ A public link is the anonymous access token for one profile. A link starts pendi
 | State | Meaning |
 |---|---|
 | `unassigned` | Inventory card with no owner |
-| `assigned` | Card is owned but not yet issued |
-| `active` | Card is issued and active |
+| `assigned` | Card is bound to a current profile link and ready for delivery; link-first cards intentionally have no direct `owner_id` |
+| `active` | Card is issued and active; authorization still comes from the attached profile link |
 | `disabled` | Card is issued but disabled |
 | `lost` | Card is terminal after loss report |
 | `replaced` | Card is terminal after replacement |
@@ -81,29 +81,29 @@ All newly created links begin pending. A link cannot activate while unbound. Act
 3. Admin binds the pending link to the blank card.
 4. Write the one-time URL to the physical card.
 5. Confirm the read-back URL.
-6. Assign the verified card for delivery to the profile owner.
-7. Issue/deliver the card.
-8. Activate the attached link when public access should begin.
+6. Issue/deliver the verified, link-bound card.
+7. Activate the attached link when public access should begin.
 
 If a card is lost, disabled, detached, or replaced, the backend deactivates the assignment and disables or revokes the associated link.
 
-Replacement creates a new card-purpose link for the replacement card and never silently reuses the old exposed token.
+Replacement creates a new ownerless card-purpose link binding for the replacement card and never silently reuses the old exposed token. The old card is marked replaced without inventing a direct owner, and the old link is revoked in the same transaction.
 
 ## User card controls
 
-Authenticated users can see only their own issued, current cards. Safe card responses include status and link summaries, not raw tokens or hashes.
+Authenticated users can see only their own issued, current cards through their profile links. Safe card responses include physical-card status and link summaries, not raw tokens or hashes.
 
-User actions are limited to the selected card:
+User actions are limited to the selected attached link/card:
 
 - activate
 - disable
+- revoke
 - report lost
 
 ## Legacy and compatibility behavior
 
-The backend still keeps compatibility paths for older deployments when link and assignment repositories are unavailable. In that fallback mode, card provisioning and verification use the legacy card token hash path.
+Legacy `owner_id` and card token-hash fields remain in storage for the deferred migration/retirement work. Anonymous lookup, card encoding verification, profile-link binding, and normal user-card authorization use public-link and assignment records. The removed direct assignment, card-local provision, reprovision, and detach routes are no longer part of the HTTP contract.
 
-Two operator commands handle the cutover:
+Two operator commands handle the deferred cutover:
 
 - `emercard.db.normalize_legacy_links` copies known legacy hashes into public-link records and creates assignments.
 - `emercard.db.retire_legacy_access_fields` drops obsolete legacy fields and indexes only after validation, backup, and rollback mapping are confirmed.

@@ -95,7 +95,7 @@ Indexes enforce:
 
 ## Card documents
 
-A card document stores physical identity, custody, and compatibility metadata:
+A card document stores physical identity, custody, and deferred migration compatibility metadata. It is not the source of public-link or authenticated user-card authorization:
 
 - `_id`
 - `serial`
@@ -119,7 +119,7 @@ A card document stores physical identity, custody, and compatibility metadata:
 - `created_at`
 - `updated_at`
 
-`token_revision` is not part of the current model. The code still keeps the legacy token hash path for compatibility, but card access is now governed by public links and assignments.
+`token_revision` is not part of the current model. The legacy token hash remains only for deferred migration/retirement; card access is governed by profile-owned public links and assignments. Link-first cards use `owner_id: null` even when `status` is `assigned`, `active`, `disabled`, `lost`, or `replaced`; direct owner mutations are compatibility-only and rejected when the link-first dependencies are configured.
 
 Card indexes include:
 
@@ -154,7 +154,7 @@ The initial demo limits remain centralized in `Settings`. See `configuration.md`
 
 - `public_access_links` is the canonical anonymous lookup store.
 - `/api/v1/public/{token}` is the canonical HTTP entrypoint.
-- `/api/v1/emergency/{token}` remains a compatibility adapter over public links.
+- `/api/v1/emergency/{token}` remains a read-only compatibility adapter over active public links and current assignments.
 - `medical_profiles.public_access` remains only for compatibility until the retirement command is run.
 
 ## Index initialization

@@ -89,6 +89,25 @@ def active_link(
     )
 
 
+def active_assignment(link: PublicAccessLinkDocument) -> CardLinkAssignmentDocument:
+    return CardLinkAssignmentDocument.model_validate(
+        {
+            "_id": ObjectId("507f1f77bcf86cd799439015"),
+            "card_id": ObjectId("507f1f77bcf86cd799439016"),
+            "public_access_link_id": link.id,
+            "status": CardLinkAssignmentStatus.ACTIVE,
+            "attached_at": NOW,
+            "updated_at": NOW,
+            "attached_by_admin_id": ObjectId("507f1f77bcf86cd799439017"),
+            "disabled_at": None,
+            "disabled_by_admin_id": None,
+            "detached_at": None,
+            "detached_by_admin_id": None,
+            "detach_reason": None,
+        }
+    )
+
+
 class FakeLinkRepository:
     def __init__(self, link: PublicAccessLinkDocument | None) -> None:
         self.link = link
@@ -155,6 +174,9 @@ def make_client(
         database=FakeDatabase(ready=True),
         public_access_link_repository=link_repository,
         profile_repository=profile_repository,
+        card_link_assignment_repository=FakeAssignmentRepository(
+            active_assignment(link) if link is not None else None
+        ),
         emergency_rate_limiter=rate_limiter,
     )
     return TestClient(app), link_repository, profile_repository
@@ -165,7 +187,11 @@ async def test_lookup_hashes_raw_token_and_uses_only_constrained_repository_meth
     links = FakeLinkRepository(active_link())
     profiles = FakeProfileRepository(profile_document())
 
-    result = await EmergencyLookupService(links, profiles).lookup(TOKEN)
+    result = await EmergencyLookupService(
+        links,
+        profiles,
+        assignment_repository=FakeAssignmentRepository(active_assignment(active_link())),
+    ).lookup(TOKEN)
 
     assert result.display_name == "Alex Example"
     assert links.calls == [hash_public_token(TOKEN)]
@@ -177,22 +203,7 @@ async def test_lookup_hashes_raw_token_and_uses_only_constrained_repository_meth
 @pytest.mark.asyncio
 async def test_lookup_includes_safe_card_attribution_when_available() -> None:
     link = active_link()
-    assignment = CardLinkAssignmentDocument.model_validate(
-        {
-            "_id": ObjectId("507f1f77bcf86cd799439015"),
-            "card_id": ObjectId("507f1f77bcf86cd799439016"),
-            "public_access_link_id": link.id,
-            "status": CardLinkAssignmentStatus.ACTIVE,
-            "attached_at": NOW,
-            "updated_at": NOW,
-            "attached_by_admin_id": ObjectId("507f1f77bcf86cd799439017"),
-            "disabled_at": None,
-            "disabled_by_admin_id": None,
-            "detached_at": None,
-            "detached_by_admin_id": None,
-            "detach_reason": None,
-        }
-    )
+    assignment = active_assignment(link)
     result = await EmergencyLookupService(
         FakeLinkRepository(link),
         FakeProfileRepository(profile_document()),

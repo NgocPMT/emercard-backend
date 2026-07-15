@@ -44,22 +44,18 @@ Every route below requires an authenticated administrator.
 - `POST /api/v1/admin/cards` creates a blank serial-only card and requires `Idempotency-Key`.
 - `GET /api/v1/admin/cards` lists cards with safe filters.
 - `GET /api/v1/admin/cards/{cardId}` returns safe card metadata and a safe owner summary.
-- `POST /api/v1/admin/cards/{cardId}/assign` assigns a verified card to a user ID.
-- `POST /api/v1/admin/cards/{cardId}/reassign` changes the owner before issue.
-- `POST /api/v1/admin/cards/{cardId}/unassign` removes the pre-issue owner.
-- `POST /api/v1/admin/cards/{cardId}/issue` issues the card.
+- `POST /api/v1/admin/cards/{cardId}/issue` issues a verified card that is bound to a pending profile link. Binding marks the physical card ready for delivery without assigning a direct user owner.
 - `POST /api/v1/admin/cards/{cardId}/void` retires the card before issue.
 - `POST /api/v1/admin/cards/{cardId}/lost` marks the card lost.
 - `POST /api/v1/admin/cards/{cardId}/replace` provisions a replacement card and returns the one-time URL.
 
+Direct user assignment, reassignment, unassignment, and card-local provision/reprovision routes are removed from the active HTTP contract.
+
 ### Card-link provisioning
 
-- `POST /api/v1/admin/cards/{cardId}/provision-link` is rejected; links are created for profiles first.
-- `POST /api/v1/admin/cards/{cardId}/reprovision-link` is rejected; rebind to another pending profile link instead.
-- `POST /api/v1/admin/cards/{cardId}/confirm-encoding` verifies a read-back `public_url` for the currently attached link.
+- `POST /api/v1/admin/cards/{cardId}/confirm-encoding` verifies a read-back `public_url` for the currently attached profile link; legacy card token hashes are not accepted as the binding source.
 - `GET /api/v1/admin/cards/{cardId}/link` returns the safe card/link summary.
 - `POST /api/v1/admin/cards/{cardId}/link/attach` binds one pending profile link. Before delivery it may rebind, revoking the prior link automatically.
-- `POST /api/v1/admin/cards/{cardId}/link/detach` is rejected; delivered cards retain their link binding.
 - `POST /api/v1/admin/cards/{cardId}/link/activate` activates an encoded, delivered attached link.
 - `POST /api/v1/admin/cards/{cardId}/link/disable` temporarily disables the attached link.
 - `POST /api/v1/admin/cards/{cardId}/link/revoke` permanently revokes the attached link without detaching it.
@@ -70,7 +66,7 @@ Every route below requires an authenticated administrator.
 - `GET /api/v1/admin/users/{user_id}/links` lists safe public links for that profile.
 - `POST /api/v1/admin/users/{user_id}/links` creates a pending standalone or card-purpose link for that profile. It is not public until bound to one card, encoded, delivered, and activated.
 
-Safe admin responses never expose raw tokens, token hashes, or medical-profile data except through the explicit public-profile projection. Provisioning responses are the only admin responses that include a raw URL and they are marked `Cache-Control: no-store`.
+Safe admin responses never expose raw tokens, token hashes, or medical-profile data except through the explicit public-profile projection. The one-time profile-link creation response is the only link-management response that includes a raw URL and it is marked `Cache-Control: no-store`.
 
 ## Public profile links
 

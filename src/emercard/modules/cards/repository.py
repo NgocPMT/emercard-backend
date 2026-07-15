@@ -82,6 +82,39 @@ class CardRepository:
             session=session,
         )
 
+    async def mark_link_bound(
+        self,
+        *,
+        card_id: ObjectId | str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument | None:
+        """Move a blank card into custody without assigning a user owner."""
+
+        identifier = _object_id(card_id)
+        timestamp = now or utc_now()
+        document = await self._collection.find_one_and_update(
+            {
+                "_id": identifier,
+                "status": CardStatus.UNASSIGNED,
+                "owner_id": None,
+                "is_current": False,
+                "issued_at": None,
+                "activated_at": None,
+            },
+            {
+                "$set": {
+                    "status": CardStatus.ASSIGNED,
+                    "is_current": True,
+                    "assigned_at": timestamp,
+                    "updated_at": timestamp,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+            **_session_kwargs(session),
+        )
+        return _card(document)
+
     async def find_by_id(
         self, card_id: ObjectId | str, *, session: Any | None = None
     ) -> CardDocument | None:
@@ -110,28 +143,6 @@ class CardRepository:
             raise InvalidIdentifierError("invalid card token hash") from error
         document = await self._collection.find_one(
             {"token_hash": canonical_hash}, **_session_kwargs(session)
-        )
-        return _card(document)
-
-    async def find_publicly_resolvable_by_token_hash(
-        self, token_hash: str, *, session: Any | None = None
-    ) -> CardDocument | None:
-        """Resolve only cards that are currently safe for anonymous lookup."""
-
-        try:
-            canonical_hash = validate_token_hash(token_hash)
-        except CardInvariantError as error:
-            raise InvalidIdentifierError("invalid card token hash") from error
-        document = await self._collection.find_one(
-            {
-                "token_hash": canonical_hash,
-                "status": CardStatus.ACTIVE,
-                "is_current": True,
-                "owner_id": {"$type": "objectId"},
-                "issued_at": {"$type": "date"},
-                "encoding_verified_at": {"$type": "date"},
-            },
-            **_session_kwargs(session),
         )
         return _card(document)
 
@@ -440,7 +451,8 @@ class CardRepository:
         document = await self._collection.find_one_and_update(
             {
                 "_id": identifier,
-                "status": CardStatus.UNASSIGNED,
+                "status": CardStatus.ASSIGNED,
+                "is_current": True,
                 "owner_id": None,
                 "encoding_verified_at": None,
                 "issued_at": None,
@@ -596,9 +608,8 @@ class CardRepository:
         document = await self._collection.find_one_and_update(
             {
                 "_id": identifier,
-                "status": CardStatus.ASSIGNED,
-                "is_current": True,
-                "owner_id": {"$type": "objectId"},
+                "status": {"$in": [CardStatus.UNASSIGNED, CardStatus.ASSIGNED]},
+                "is_current": {"$in": [False, True]},
                 "encoding_verified_at": {"$type": "date"},
                 "issued_at": None,
                 "activated_at": None,
@@ -726,6 +737,23 @@ class CardRepository:
             from_statuses={CardStatus.ASSIGNED, CardStatus.ACTIVE, CardStatus.DISABLED},
             to_status=CardStatus.REPLACED,
             owner_id=owner_id,
+            now=now,
+            session=session,
+        )
+
+    async def mark_replaced_without_owner(
+        self,
+        *,
+        card_id: ObjectId | str,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument | None:
+        """Retire a link-first card without inventing a direct owner."""
+
+        return await self.transition_status(
+            card_id=card_id,
+            from_statuses={CardStatus.ASSIGNED, CardStatus.ACTIVE, CardStatus.DISABLED},
+            to_status=CardStatus.REPLACED,
             now=now,
             session=session,
         )

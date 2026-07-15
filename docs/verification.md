@@ -32,7 +32,7 @@ Replica-set-capable MongoDB is required for transaction coverage. The current Mo
 
 - public-link lifecycle and privacy headers
 - card-link assignment conflicts and history
-- emergency/public lookup compatibility
+- emergency/public lookup through active profile links and current assignments
 - legacy migration normalization
 - legacy access-field retirement
 - card replacement rollback behavior
@@ -53,12 +53,13 @@ The first command group should return safe JSON and never print raw tokens in er
 
 ## Card and lookup checks
 
-- active/current/issued/encoding-verified cards resolve through the constrained `card -> link -> profile` path;
+- active/current/issued/encoding-verified cards resolve through the constrained `profile -> link -> card` path;
 - pending/unbound links never resolve publicly; only links with an active current card assignment can resolve;
 - disabled, lost, replaced, void, non-current, assigned, unknown, malformed, ownerless, and missing-profile cases return neutral errors;
-- multiple active cards for one owner resolve independently;
+- multiple active cards for one profile resolve independently;
 - disabling a link blocks the unchanged URL, and reactivation restores it when allowed without changing the card assignment or token;
 - pre-delivery rebinding revokes the previous link, while delivered/lost/replaced cards retain their historical assignment and revoke only link access;
+- direct assignment, card-local provision/reprovision, and detach routes are absent from the generated HTTP contract;
 - success and error responses contain the required privacy headers;
 - request logs contain only the route template and low-cardinality outcome, never token-bearing paths or hashes.
 
