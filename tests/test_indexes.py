@@ -21,6 +21,8 @@ from emercard.db.indexes import (
     CUSTODY_EVENT_CARD_INDEX,
     CUSTODY_EVENT_OWNER_INDEX,
     IDEMPOTENCY_KEY_INDEX,
+    LINK_ACCESS_EVENTS_CARD_LINK_TIME_INDEX,
+    LINK_ACCESS_EVENTS_TTL_INDEX,
     LOCATION_ALERT_AUDIT_LINK_INDEX,
     LOCATION_ALERT_AUDIT_TTL_INDEX,
     PROFILES_PUBLIC_TOKEN_INDEX,
@@ -81,6 +83,9 @@ class FakeDatabase:
             "location_alert_audits": FakeCollection(
                 [LOCATION_ALERT_AUDIT_TTL_INDEX, LOCATION_ALERT_AUDIT_LINK_INDEX]
             ),
+            "link_access_events": FakeCollection(
+                [LINK_ACCESS_EVENTS_CARD_LINK_TIME_INDEX, LINK_ACCESS_EVENTS_TTL_INDEX]
+            ),
         }
 
     def __getitem__(self, name: str) -> FakeCollection:
@@ -124,6 +129,10 @@ async def test_initialize_indexes_is_explicit_and_uses_required_collections() ->
         "card_custody_events": [CUSTODY_EVENT_CARD_INDEX, CUSTODY_EVENT_OWNER_INDEX],
         "idempotency_keys": [IDEMPOTENCY_KEY_INDEX],
         "location_alert_audits": [LOCATION_ALERT_AUDIT_TTL_INDEX, LOCATION_ALERT_AUDIT_LINK_INDEX],
+        "link_access_events": [
+            LINK_ACCESS_EVENTS_CARD_LINK_TIME_INDEX,
+            LINK_ACCESS_EVENTS_TTL_INDEX,
+        ],
     }
     database.collections["users"].create_indexes.assert_awaited_once()
     database.collections["medical_profiles"].create_indexes.assert_awaited_once()

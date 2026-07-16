@@ -13,6 +13,7 @@ The Phase 1 collections are:
 - `cards`
 - `card_custody_events`
 - `idempotency_keys`
+- `link_access_events`
 
 `medical_profiles.user_id` is unique, enforcing one profile per account. The legacy embedded `public_access` field remains on the profile document for compatibility, but anonymous lookup now uses `public_access_links`.
 
@@ -92,6 +93,18 @@ Indexes enforce:
 - one active assignment per `card_id`
 - one active assignment per `public_access_link_id`
 - historical rows are allowed for auditing
+
+## Link access events
+
+`link_access_events` stores minimized successful card-backed public-link openings. A document contains only:
+
+- `_id`
+- `card_id`
+- `public_access_link_id`
+- `accessed_at`
+- `expires_at`
+
+The collection is indexed by card/link/access time for owner pagination and has a TTL index on `expires_at`. It never stores bearer tokens, visitor identity, IP addresses, user agents, location, or medical data.
 
 ## Card documents
 

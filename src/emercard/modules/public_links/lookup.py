@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 from bson.errors import InvalidId
 from bson.objectid import ObjectId
 from pymongo.errors import PyMongoError
 
+from emercard.core.types import utc_now
 from emercard.db.repositories import InvalidIdentifierError, RepositoryError
 from emercard.modules.card_link_assignments.models import CardLinkAssignmentDocument
 from emercard.modules.cards.identity import hash_public_token
@@ -26,10 +29,22 @@ from emercard.modules.public_links.errors import (
 from emercard.modules.public_links.models import (
     PublicAccessLinkDocument,
     PublicAccessLinkStatus,
+    PublicLinkPurpose,
     PublicProfileLookupResult,
 )
 
 _TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+logger = logging.getLogger(__name__)
+
+
+class PublicAccessHistoryRepositoryProtocol(Protocol):
+    async def append(
+        self,
+        *,
+        card_id: ObjectId | str,
+        public_access_link_id: ObjectId | str,
+        accessed_at: datetime,
+    ) -> object: ...
 
 
 class PublicAccessLinkRepositoryProtocol(Protocol):
@@ -66,11 +81,13 @@ class PublicProfileLookupService:
         profile_repository: ProfileRepositoryProtocol,
         *,
         assignment_repository: CardLinkAssignmentRepositoryProtocol | None = None,
+        access_history_repository: PublicAccessHistoryRepositoryProtocol | None = None,
         token_max_length: int = 128,
     ) -> None:
         self._link_repository = link_repository
         self._profile_repository = profile_repository
         self._assignment_repository = assignment_repository
+        self._access_history_repository = access_history_repository
         self._token_max_length = token_max_length
 
     async def lookup(self, raw_token: str) -> PublicProfileLookupResult:
@@ -113,6 +130,7 @@ class PublicProfileLookupService:
 
         assignment_id = None
         card_id = None
+        assignment = None
         assignment_repository = self._assignment_repository
         if assignment_repository is not None:
             try:
@@ -128,6 +146,25 @@ class PublicProfileLookupService:
             card_id = str(assignment.card_id)
         # The repository is optional only for isolated legacy callers. Production
         # routes always inject it, so deployed lookups fail closed.
+        access_history_repository = self._access_history_repository
+        if (
+            access_history_repository is not None
+            and assignment is not None
+            and link.purpose is PublicLinkPurpose.CARD
+        ):
+            try:
+                await access_history_repository.append(
+                    card_id=assignment.card_id,
+                    public_access_link_id=link.id,
+                    accessed_at=utc_now(),
+                )
+            except Exception:
+                # Access history is observability, not a prerequisite for emergency access.
+                # Never log bearer-derived identifiers or repository exception details.
+                logger.warning(
+                    "public link access history write failed",
+                    extra={"outcome": "audit_unavailable"},
+                )
 
         return PublicProfileLookupResult(
             profile=public_profile,

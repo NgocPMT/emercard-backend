@@ -32,6 +32,8 @@ CUSTODY_EVENT_OWNER_INDEX = "card_custody_events_owner_created"
 IDEMPOTENCY_KEY_INDEX = "idempotency_keys_operation_unique"
 LOCATION_ALERT_AUDIT_TTL_INDEX = "location_alert_audits_expires"
 LOCATION_ALERT_AUDIT_LINK_INDEX = "location_alert_audits_link_created"
+LINK_ACCESS_EVENTS_CARD_LINK_TIME_INDEX = "link_access_events_card_link_accessed"
+LINK_ACCESS_EVENTS_TTL_INDEX = "link_access_events_expires"
 
 
 def collection_indexes(settings: Settings) -> dict[str, list[IndexModel]]:
@@ -140,6 +142,21 @@ def collection_indexes(settings: Settings) -> dict[str, list[IndexModel]]:
             IndexModel(
                 [("link_id", ASCENDING), ("created_at", ASCENDING)],
                 name=LOCATION_ALERT_AUDIT_LINK_INDEX,
+            ),
+        ],
+        settings.mongodb_link_access_events_collection: [
+            IndexModel(
+                [
+                    ("card_id", ASCENDING),
+                    ("public_access_link_id", ASCENDING),
+                    ("accessed_at", ASCENDING),
+                ],
+                name=LINK_ACCESS_EVENTS_CARD_LINK_TIME_INDEX,
+            ),
+            IndexModel(
+                [("expires_at", ASCENDING)],
+                name=LINK_ACCESS_EVENTS_TTL_INDEX,
+                expireAfterSeconds=0,
             ),
         ],
     }

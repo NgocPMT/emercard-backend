@@ -2,19 +2,28 @@
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pymongo.errors import PyMongoError
 
 from emercard.api.auth_routes import get_current_user
+from emercard.db.repositories import InvalidIdentifierError, RepositoryError
 from emercard.modules.card_link_assignments import CardLinkAssignmentRepository
 from emercard.modules.cards import (
+    CardNotFoundError,
     CardRepository,
     CardService,
+    CardServiceUnavailableError,
     UserCardListOutput,
     UserCardOutput,
     to_user_card,
 )
+from emercard.modules.link_access_history import (
+    LinkAccessHistoryOutput,
+    LinkAccessHistoryRepository,
+    to_link_access_event_output,
+)
 from emercard.modules.profiles.repository import ProfileRepository
-from emercard.modules.public_links import PublicAccessLinkRepository
+from emercard.modules.public_links import PublicAccessLinkRepository, PublicLinkPurpose
 from emercard.modules.users import CurrentUserOutput, UserRepository
 
 
@@ -87,6 +96,40 @@ def build_user_card_router() -> APIRouter:
         )
         return to_user_card(card, link=link)
 
+    @router.get(
+        "/me/cards/{card_id}/access-history",
+        response_model=LinkAccessHistoryOutput,
+    )
+    async def list_my_card_access_history(  # pyright: ignore[reportUnusedFunction]
+        card_id: str,
+        limit: int = Query(default=50, ge=1, le=100),  # noqa: B008
+        cursor: str | None = Query(default=None, max_length=512),  # noqa: B008
+        user: CurrentUserOutput = Depends(get_current_user),  # noqa: B008
+        service: CardService = Depends(get_user_card_service),  # noqa: B008
+        repository: Any = Depends(get_user_card_access_history_repository),  # noqa: B008
+    ) -> LinkAccessHistoryOutput:
+        _card, link, _assignment = await service.describe_user_card(
+            card_id=card_id,
+            user_id=user.id,
+        )
+        if link is None or link.purpose is not PublicLinkPurpose.CARD:
+            raise CardNotFoundError("card does not exist")
+        try:
+            events, next_cursor = await repository.list_by_card_and_link(
+                card_id=card_id,
+                public_access_link_id=link.id,
+                limit=limit,
+                cursor=cursor,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="invalid access history cursor") from error
+        except (InvalidIdentifierError, RepositoryError, PyMongoError) as error:
+            raise CardServiceUnavailableError("card service is unavailable") from error
+        return LinkAccessHistoryOutput(
+            items=[to_link_access_event_output(event) for event in events],
+            next_cursor=next_cursor,
+        )
+
     @router.post("/me/cards/{card_id}/lost", response_model=UserCardOutput)
     async def report_my_card_lost(  # pyright: ignore[reportUnusedFunction]
         card_id: str,
@@ -102,6 +145,16 @@ def build_user_card_router() -> APIRouter:
         return to_user_card(card, link=link)
 
     return router
+
+
+async def get_user_card_access_history_repository(request: Request) -> Any:
+    repository: Any = getattr(request.app.state, "link_access_history_repository", None)
+    if repository is not None:
+        return repository
+    return LinkAccessHistoryRepository(
+        request.app.state.database.database,
+        request.app.state.settings,
+    )
 
 
 async def get_user_card_service(request: Request) -> CardService:

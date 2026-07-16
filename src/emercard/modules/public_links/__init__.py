@@ -12,6 +12,7 @@ from emercard.modules.public_links.errors import (
 )
 from emercard.modules.public_links.lookup import (
     ProfileRepositoryProtocol,
+    PublicAccessHistoryRepositoryProtocol,
     PublicAccessLinkRepositoryProtocol,
     PublicProfileLookupService,
 )
@@ -29,6 +30,7 @@ from emercard.modules.public_links.service import PublicProfileLinkService
 __all__ = [
     "PublicAccessLinkDocument",
     "PublicAccessLinkRepository",
+    "PublicAccessHistoryRepositoryProtocol",
     "PublicAccessLinkRepositoryProtocol",
     "PublicAccessLinkStatus",
     "PublicLinkPurpose",

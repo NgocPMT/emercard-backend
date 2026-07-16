@@ -32,6 +32,7 @@ Every route below requires an authenticated user session. Ownership comes only f
 - `POST /api/v1/me/cards/{cardId}/activate` activates an issued owned card from `assigned` or `disabled`.
 - `POST /api/v1/me/cards/{cardId}/disable` disables an owned issued `active` card.
 - `POST /api/v1/me/cards/{cardId}/lost` marks the selected card lost.
+- `GET /api/v1/me/cards/{cardId}/access-history?limit=&cursor=` returns the owner's newest-first, timestamp-only history of successful public-link openings.
 
 User card responses contain only safe identifiers, lifecycle timestamps, derived action flags, and link summaries. They never include raw tokens, token hashes, public URLs, owner/admin identifiers, custody history, replacement internals, or medical-profile data.
 
@@ -78,6 +79,7 @@ Safe admin responses never expose raw tokens, token hashes, or medical-profile d
 - Disabled links return `410 public_profile.disabled`.
 - Pending, expired, revoked, or missing-profile cases return the corresponding neutral safe error.
 - All public-profile responses use `Cache-Control: no-store`, `Pragma: no-cache`, `X-Robots-Tag: noindex, nofollow, noarchive`, `Referrer-Policy: no-referrer`, and `X-Content-Type-Options: nosniff`.
+- Successful active card-backed lookups append one minimized access event; event persistence is fail-open so it cannot block emergency profile access.
 - Request logs use `/api/v1/public/{token}` as the route template.
 
 ## Anonymous emergency lookup

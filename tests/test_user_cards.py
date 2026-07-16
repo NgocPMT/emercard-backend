@@ -32,6 +32,7 @@ from emercard.modules.cards import (
     generate_serial,
     hash_public_token,
 )
+from emercard.modules.link_access_history import LinkAccessEventDocument
 from emercard.modules.profiles.models import ProfileDocument
 from emercard.modules.public_links import (
     PublicAccessLinkDocument,
@@ -1447,6 +1448,60 @@ async def test_disabling_or_revoking_card_a_does_not_change_card_b() -> None:
     assert next(iter(links_a.links.values())).status is PublicAccessLinkStatus.REVOKED
     assert next(iter(links_b.links.values())).status is PublicAccessLinkStatus.ACTIVE
     assert card_b.id != card_a.id
+
+
+def test_user_card_access_history_route_is_owner_scoped_and_minimized() -> None:
+    owner = user()
+    user_repository = UserRepository(owner)
+    service, safe_card, links, _assignments = linked_card_service(
+        link_status=PublicAccessLinkStatus.ACTIVE,
+    )
+    link = next(iter(links.links.values()))
+    history = AsyncMock()
+    event = LinkAccessEventDocument.model_validate(
+        {
+            "_id": ObjectId(),
+            "card_id": safe_card.id,
+            "public_access_link_id": link.id,
+            "accessed_at": NOW,
+            "expires_at": NOW,
+        }
+    )
+    history.list_by_card_and_link.return_value = ([event], "opaque-next-page")
+    app = create_app(
+        settings=settings(),
+        database=FakeDatabase(ready=True),
+        auth_repository=user_repository,
+        profile_repository=ProfileRepository(profile(ready=True)),
+        link_access_history_repository=history,
+    )
+    app.dependency_overrides[get_user_card_service] = lambda: service
+
+    with TestClient(app) as client:
+        unauthenticated = client.get(f"/api/v1/me/cards/{safe_card.id}/access-history")
+        assert (
+            client.post(
+                "/api/v1/auth/login",
+                json={"email": "person@example.com", "password": "password-123"},
+            ).status_code
+            == 200
+        )
+        response = client.get(f"/api/v1/me/cards/{safe_card.id}/access-history?limit=1")
+
+    assert unauthenticated.status_code == 401
+    assert response.status_code == 200
+    assert response.json()["items"] == [
+        {"id": str(event.id), "accessed_at": NOW.isoformat().replace("+00:00", "Z")}
+    ]
+    assert response.json()["next_cursor"] == "opaque-next-page"
+    assert "public_access_link_id" not in response.text
+    assert "card_id" not in response.text
+    history.list_by_card_and_link.assert_awaited_once_with(
+        card_id=str(safe_card.id),
+        public_access_link_id=link.id,
+        limit=1,
+        cursor=None,
+    )
 
 
 def test_user_card_routes_are_authenticated_and_safe() -> None:

@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     mongodb_public_access_links_collection: str = "public_access_links"
     mongodb_card_link_assignments_collection: str = "card_link_assignments"
     mongodb_location_alert_audits_collection: str = "location_alert_audits"
+    mongodb_link_access_events_collection: str = "link_access_events"
     mongodb_test_database_prefix: str = "emercard_test"
     mongodb_index_initialization_mode: IndexInitializationMode = "disabled"
 
@@ -67,6 +68,7 @@ class Settings(BaseSettings):
     location_alert_ip_window_seconds: Annotated[int, Field(ge=1, le=86_400)] = 3_600
     location_alert_ip_burst: Annotated[int, Field(ge=1, le=100)] = 5
     location_alert_audit_retention_seconds: Annotated[int, Field(ge=60, le=31_536_000)] = 2_592_000
+    link_access_history_retention_seconds: Annotated[int, Field(ge=60, le=31_536_000)] = 7_776_000
     location_provider_timeout_seconds: Annotated[float, Field(gt=0, le=60)] = 5.0
     email_provider_timeout_seconds: Annotated[float, Field(gt=0, le=60)] = 10.0
     google_geocoding_api_key: SecretStr | None = None
@@ -121,6 +123,7 @@ class Settings(BaseSettings):
         "mongodb_public_access_links_collection",
         "mongodb_card_link_assignments_collection",
         "mongodb_location_alert_audits_collection",
+        "mongodb_link_access_events_collection",
         "mongodb_test_database_prefix",
         "auth_cookie_name",
     )
@@ -245,9 +248,7 @@ class Settings(BaseSettings):
                 raise ValueError("public_profile_base_url must use https for deployments")
             google_key = self.google_geocoding_api_key
             if google_key is None or not google_key.get_secret_value():
-                raise ValueError(
-                    "google_geocoding_api_key is required for deployments"
-                )
+                raise ValueError("google_geocoding_api_key is required for deployments")
             if self.brevo_api_key is None or not self.brevo_api_key.get_secret_value():
                 raise ValueError("brevo_api_key is required for deployments")
         if self.auth_cookie_same_site == "none" and not self.auth_cookie_secure:

@@ -60,6 +60,7 @@ def create_app(
     emergency_rate_limiter: Any | None = None,
     public_access_link_repository: Any | None = None,
     card_link_assignment_repository: Any | None = None,
+    link_access_history_repository: Any | None = None,
     location_alert_service: LocationAlertService | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
@@ -100,6 +101,8 @@ def create_app(
         app.state.public_access_link_repository = public_access_link_repository
     if card_link_assignment_repository is not None:
         app.state.card_link_assignment_repository = card_link_assignment_repository
+    if link_access_history_repository is not None:
+        app.state.link_access_history_repository = link_access_history_repository
     if location_alert_service is not None:
         app.state.location_alert_service = location_alert_service
 
