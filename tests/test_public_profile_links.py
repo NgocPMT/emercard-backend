@@ -52,9 +52,13 @@ def settings(**overrides: object) -> Settings:
     )
 
 
-def ready_profile(*, blood_type: str = "O+", updated_at: datetime = NOW) -> ProfileDocument:
-    return ProfileDocument.model_validate(
-        {
+def ready_profile(
+    *,
+    blood_type: str = "O+",
+    updated_at: datetime = NOW,
+    private_profile_envelope: dict[str, Any] | None = None,
+) -> ProfileDocument:
+    payload: dict[str, Any] = {
             "_id": PROFILE_ID,
             "user_id": OWNER_ID,
             "display_name": "Alex Example",
@@ -81,7 +85,9 @@ def ready_profile(*, blood_type: str = "O+", updated_at: datetime = NOW) -> Prof
             "created_at": NOW,
             "updated_at": updated_at,
         }
-    )
+    if private_profile_envelope is not None:
+        payload["private_profile_envelope"] = private_profile_envelope
+    return ProfileDocument.model_validate(payload)
 
 
 def incomplete_profile() -> ProfileDocument:
@@ -529,6 +535,43 @@ async def test_public_lookup_returns_allowlisted_public_profile() -> None:
     assert result.profile_updated_at == NOW
     assert "legacy-secret" not in result.model_dump_json()
     assert "internal-contact-id" not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_public_lookup_returns_only_opaque_private_profile_envelope() -> None:
+    envelope = {
+        "version": 1,
+        "kdf": {
+            "algorithm": "argon2id",
+            "salt": "c2FsdC1mb3ItcHJpdmF0ZQ==",
+            "memory_cost_kib": 65_536,
+            "time_cost": 3,
+            "parallelism": 1,
+        },
+        "nonce": "bm9uY2UtMTIzNDU2Nzg=",
+        "ciphertext": "ZW5jcnlwdGVk",
+        "access_code_wrap": {
+            "algorithm": "aes-256-gcm",
+            "nonce": "d3JhcC1ub25jZS0xMjM=",
+            "ciphertext": "YWNjZXNz",
+        },
+        "recovery_key_wrap": {
+            "algorithm": "aes-256-gcm",
+            "nonce": "cmVjb3Zlcnktbm9uY2Ux",
+            "ciphertext": "cmVjb3Zlcnk=",
+        },
+    }
+    service = PublicProfileLookupService(
+        InMemoryLinkRepository(link_document(token_hash=hash_public_token(TOKEN))),
+        InMemoryProfileRepository(ready_profile(private_profile_envelope=envelope)),
+    )
+
+    result = await service.lookup(TOKEN)
+
+    assert result.private_profile_envelope is not None
+    assert result.private_profile_envelope.model_dump() == envelope
+    assert "address" not in result.model_dump_json()
+    assert "cccd" not in result.model_dump_json()
 
 
 @pytest.mark.asyncio

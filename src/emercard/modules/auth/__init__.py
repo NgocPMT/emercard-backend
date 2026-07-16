@@ -5,6 +5,7 @@ from emercard.modules.auth.exceptions import (
     DuplicateEmailError,
     InvalidCredentialsError,
     InvalidSessionError,
+    PrivateProfileAuthorizationError,
 )
 from emercard.modules.auth.service import AuthService
 
@@ -14,4 +15,5 @@ __all__ = [
     "DuplicateEmailError",
     "InvalidCredentialsError",
     "InvalidSessionError",
+    "PrivateProfileAuthorizationError",
 ]

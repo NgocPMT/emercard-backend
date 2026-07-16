@@ -1,5 +1,6 @@
 """Password hashing and signed session-token primitives."""
 
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -50,6 +51,69 @@ def issue_session_token(user_id: str, settings: Settings) -> str:
         _auth_secret(settings),
         algorithm=settings.auth_algorithm,
     )
+
+
+def issue_private_profile_authorization(
+    user_id: str,
+    settings: Settings,
+    *,
+    lifetime_seconds: int,
+) -> tuple[str, datetime]:
+    """Issue a short-lived bearer token for one private-profile write purpose.
+
+    The token is intentionally replayable until expiry because this service has
+    no durable nonce store. It is scoped to the authenticated user and purpose;
+    callers must use HTTPS and avoid logging it.
+    """
+
+    now = datetime.now(UTC).replace(microsecond=0)
+    expires_at = now + timedelta(seconds=lifetime_seconds)
+    claims = {
+        "sub": user_id,
+        "purpose": "private_profile_write",
+        "jti": secrets.token_urlsafe(16),
+        "iat": now,
+        "exp": expires_at,
+    }
+    token = jwt.encode(  # pyright: ignore[reportUnknownMemberType]
+        claims,
+        _auth_secret(settings),
+        algorithm=settings.auth_algorithm,
+    )
+    return token, expires_at
+
+
+def validate_private_profile_authorization(
+    token: str,
+    user_id: str,
+    settings: Settings,
+) -> datetime:
+    """Validate the user- and purpose-bound private-profile bearer token."""
+
+    try:
+        claims: Any = jwt.decode(  # pyright: ignore[reportUnknownMemberType]
+            token,
+            _auth_secret(settings),
+            algorithms=[settings.auth_algorithm],
+            leeway=settings.auth_clock_skew_seconds,
+            options={"require": ["sub", "purpose", "jti", "iat", "exp"], "verify_aud": False},
+        )
+    except jwt.InvalidTokenError as error:
+        raise ValueError("invalid private profile authorization") from error
+
+    if not isinstance(claims, dict):
+        raise ValueError("invalid private profile authorization claims")
+    typed_claims = cast(dict[str, Any], claims)
+    if (
+        typed_claims.get("sub") != user_id
+        or typed_claims.get("purpose") != "private_profile_write"
+        or not isinstance(typed_claims.get("jti"), str)
+    ):
+        raise ValueError("invalid private profile authorization claims")
+    expires_at = typed_claims.get("exp")
+    if not isinstance(expires_at, (int, float)):
+        raise ValueError("invalid private profile authorization expiry")
+    return datetime.fromtimestamp(expires_at, tz=UTC)
 
 
 def validate_session_token(token: str, settings: Settings) -> str:

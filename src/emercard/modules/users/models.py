@@ -74,6 +74,20 @@ class UserLoginInput(UserModel):
         return canonicalize_email(value)
 
 
+class PrivateProfileAuthorizationInput(UserModel):
+    """Current account password used only to authorize private-profile changes."""
+
+    password: PasswordInput
+
+
+class PrivateProfileAuthorizationOutput(UserModel):
+    """Short-lived bearer authorization for an owner private-profile write."""
+
+    authorization_token: str = Field(min_length=1, max_length=4096)
+    expires_at: UtcDateTime
+    purpose: Literal["private_profile_write"]
+
+
 class CurrentUserOutput(UserModel):
     """Authenticated user response with no password material."""
 

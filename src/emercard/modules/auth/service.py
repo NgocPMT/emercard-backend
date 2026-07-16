@@ -15,17 +15,21 @@ from emercard.modules.auth.exceptions import (
     DuplicateEmailError,
     InvalidCredentialsError,
     InvalidSessionError,
+    PrivateProfileAuthorizationError,
     RegistrationProvisioningError,
 )
 from emercard.modules.auth.security import (
     DUMMY_PASSWORD_HASH,
     hash_password,
+    issue_private_profile_authorization,
     issue_session_token,
+    validate_private_profile_authorization,
     validate_session_token,
     verify_password,
 )
 from emercard.modules.users.models import (
     CurrentUserOutput,
+    PrivateProfileAuthorizationOutput,
     UserDocument,
     UserLoginInput,
     UserRegistrationInput,
@@ -98,6 +102,43 @@ class AuthService:
             user=current_user,
             token=issue_session_token(str(user.id), self._settings),
         )
+
+    async def authorize_private_profile_write(
+        self,
+        *,
+        user_id: str,
+        password: str,
+    ) -> PrivateProfileAuthorizationOutput:
+        """Confirm the account password without using it as encryption material."""
+
+        user = await self._repository.find_by_id(user_id)
+        if user is None or not verify_password(password, user.password_hash):
+            raise InvalidCredentialsError
+        token, expires_at = issue_private_profile_authorization(
+            user_id,
+            self._settings,
+            lifetime_seconds=self._settings.private_profile_authorization_lifetime_seconds,
+        )
+        return PrivateProfileAuthorizationOutput(
+            authorization_token=token,
+            expires_at=expires_at,
+            purpose="private_profile_write",
+        )
+
+    async def validate_private_profile_write_authorization(
+        self,
+        *,
+        user_id: str,
+        token: str | None,
+    ) -> None:
+        """Validate the short-lived authorization required for envelope changes."""
+
+        if not token:
+            raise PrivateProfileAuthorizationError
+        try:
+            validate_private_profile_authorization(token, user_id, self._settings)
+        except ValueError as error:
+            raise PrivateProfileAuthorizationError from error
 
     async def current_user(self, token: str | None) -> CurrentUserOutput:
         if not token:

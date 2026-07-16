@@ -13,7 +13,9 @@ from emercard.db.repositories import RepositoryConflictError
 from emercard.main import create_app
 from emercard.modules.auth.security import (
     hash_password,
+    issue_private_profile_authorization,
     issue_session_token,
+    validate_private_profile_authorization,
     validate_session_token,
     verify_password,
 )
@@ -129,6 +131,33 @@ def test_password_hashing_does_not_store_or_accept_plaintext_hashes() -> None:
     assert verify_password(password, password_hash)
     assert not verify_password("incorrect password", password_hash)
     assert not verify_password(password, "not-a-password-hash")
+
+
+def test_private_profile_authorization_is_user_bound_and_replayable_until_expiry() -> None:
+    settings = make_settings()
+    token, expires_at = issue_private_profile_authorization(
+        "507f1f77bcf86cd799439011",
+        settings,
+        lifetime_seconds=300,
+    )
+
+    assert validate_private_profile_authorization(
+        token,
+        "507f1f77bcf86cd799439011",
+        settings,
+    ) == expires_at
+    assert validate_private_profile_authorization(
+        token,
+        "507f1f77bcf86cd799439011",
+        settings,
+    ) == expires_at
+
+    with pytest.raises(ValueError):
+        validate_private_profile_authorization(
+            token,
+            "507f1f77bcf86cd799439012",
+            settings,
+        )
 
 
 def test_session_tokens_require_expected_claims_and_signature() -> None:

@@ -188,6 +188,51 @@ async def test_profile_upsert_is_keyed_by_authenticated_user_and_generates_conta
 
 
 @pytest.mark.asyncio
+async def test_profile_upsert_preserves_omitted_private_envelope_and_allows_explicit_removal(
+) -> None:
+    database, collection = fake_database()
+    existing = raw_profile()
+    existing["private_profile_envelope"] = {
+        "version": 1,
+        "kdf": {
+            "algorithm": "argon2id",
+            "salt": "c2FsdC1mb3ItcHJpdmF0ZQ==",
+            "memory_cost_kib": 65_536,
+            "time_cost": 3,
+            "parallelism": 1,
+        },
+        "nonce": "bm9uY2UtMTIzNDU2Nzg=",
+        "ciphertext": "ZW5jcnlwdGVk",
+        "access_code_wrap": {
+            "algorithm": "aes-256-gcm",
+            "nonce": "d3JhcC1ub25jZS0xMjM=",
+            "ciphertext": "YWNjZXNz",
+        },
+        "recovery_key_wrap": {
+            "algorithm": "aes-256-gcm",
+            "nonce": "cmVjb3Zlcnktbm9uY2Ux",
+            "ciphertext": "cmVjb3Zlcnk=",
+        },
+    }
+    collection.find_one_and_update = AsyncMock(return_value=existing)
+    repository = ProfileRepository(database, Settings(environment="test"))
+    ordinary = ProfileUpsertInput(display_name="Updated", emergency_contacts=[])
+
+    await repository.upsert_for_user(user_id=USER_ID, profile=ordinary)
+    ordinary_update = collection.find_one_and_update.await_args.args[1]
+    assert "private_profile_envelope" not in ordinary_update["$set"]
+
+    explicit_remove = ProfileUpsertInput(
+        display_name="Updated",
+        emergency_contacts=[],
+        private_profile_envelope=None,
+    )
+    await repository.upsert_for_user(user_id=USER_ID, profile=explicit_remove)
+    removal_update = collection.find_one_and_update.await_args.args[1]
+    assert removal_update["$set"]["private_profile_envelope"] is None
+
+
+@pytest.mark.asyncio
 async def test_profile_replace_does_not_upsert_or_touch_server_controlled_fields() -> None:
     database, collection = fake_database()
     collection.find_one_and_update = AsyncMock(return_value=raw_profile(token="legacy-token"))

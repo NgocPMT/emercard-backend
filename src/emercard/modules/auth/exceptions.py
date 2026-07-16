@@ -20,6 +20,11 @@ class InvalidCredentialsError(AuthError):
     message = "Email hoặc mật khẩu không đúng."
 
 
+class PrivateProfileAuthorizationError(AuthError):
+    code = "auth.private_profile_authorization_invalid"
+    message = "Không thể xác nhận quyền thay đổi thông tin riêng tư."
+
+
 class AuthenticationRequiredError(AuthError):
     code = "auth.authentication_required"
     message = "Vui lòng đăng nhập để tiếp tục."

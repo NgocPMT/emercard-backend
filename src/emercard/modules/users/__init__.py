@@ -2,6 +2,8 @@
 
 from emercard.modules.users.models import (
     CurrentUserOutput,
+    PrivateProfileAuthorizationInput,
+    PrivateProfileAuthorizationOutput,
     UserDocument,
     UserLoginInput,
     UserRegistrationInput,
@@ -12,6 +14,8 @@ from emercard.modules.users.repository import UserRepository
 
 __all__ = [
     "CurrentUserOutput",
+    "PrivateProfileAuthorizationInput",
+    "PrivateProfileAuthorizationOutput",
     "UserDocument",
     "UserLoginInput",
     "UserRegistrationInput",

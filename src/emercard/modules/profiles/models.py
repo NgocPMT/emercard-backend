@@ -45,6 +45,35 @@ class ProfileModel(BaseModel):
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
 
+class PrivateProfileKdfParameters(ProfileModel):
+    """Opaque, versioned KDF metadata produced by the trusted frontend."""
+
+    algorithm: Literal["argon2id"]
+    salt: str = Field(min_length=16, max_length=256)
+    memory_cost_kib: int = Field(ge=8_192, le=1_048_576)
+    time_cost: int = Field(ge=1, le=20)
+    parallelism: int = Field(ge=1, le=32)
+
+
+class PrivateProfileKeyWrap(ProfileModel):
+    """Opaque AES-GCM wrapped data-encryption key material."""
+
+    algorithm: Literal["aes-256-gcm"]
+    nonce: str = Field(min_length=12, max_length=128)
+    ciphertext: str = Field(min_length=1, max_length=512)
+
+
+class EncryptedPrivateProfileEnvelope(ProfileModel):
+    """Client-side encrypted private details; plaintext never crosses this boundary."""
+
+    version: Literal[1]
+    kdf: PrivateProfileKdfParameters
+    nonce: str = Field(min_length=12, max_length=128)
+    ciphertext: str = Field(min_length=1, max_length=16_384)
+    access_code_wrap: PrivateProfileKeyWrap
+    recovery_key_wrap: PrivateProfileKeyWrap
+
+
 def _bounded_text(value: str, *, maximum: int, field_name: str) -> str:
     normalized = value.strip()
     if not normalized:
@@ -229,6 +258,7 @@ class ProfileDocument(ProfileModel):
     critical_medications: MedicalList
     emergency_note: str | None = None
     location_alerts_enabled: bool = False
+    private_profile_envelope: EncryptedPrivateProfileEnvelope | None = None
     emergency_contacts: list[EmergencyContactDocument] = Field(
         default_factory=_empty_document_contacts
     )
@@ -302,6 +332,7 @@ class ProfileUpsertInput(ProfileModel):
     critical_medications: MedicalList
     emergency_note: str | None = None
     location_alerts_enabled: bool = False
+    private_profile_envelope: EncryptedPrivateProfileEnvelope | None = None
     emergency_contacts: list[EmergencyContactInput] = Field(default_factory=_empty_input_contacts)
 
     @field_validator("display_name")
@@ -372,6 +403,7 @@ class ProfileDashboardOutput(ProfileModel):
     critical_medications: list[str]
     emergency_note: str | None
     location_alerts_enabled: bool
+    private_profile_envelope: EncryptedPrivateProfileEnvelope | None
     emergency_contacts: list[EmergencyContactDocument]
     public_access: PublicAccessDocument
     state: ProfileState
@@ -382,6 +414,7 @@ class ProfileDashboardOutput(ProfileModel):
 class AuthenticatedProfileOutput(ProfileModel):
     """Sanitized current-user profile response without ownership or readiness metadata."""
 
+    profile_id: str
     display_name: str | None
     birth_year: int | None
     gender: Gender | None
@@ -391,6 +424,7 @@ class AuthenticatedProfileOutput(ProfileModel):
     critical_medications: list[str]
     emergency_note: str | None
     location_alerts_enabled: bool = False
+    private_profile_envelope: EncryptedPrivateProfileEnvelope | None = None
     emergency_contacts: list[EmergencyContactAuthenticated]
     created_at: UtcDateTime
     updated_at: UtcDateTime
@@ -414,8 +448,9 @@ class ProfileView(ProfileModel):
 
 
 class PublicProfileOutput(ProfileModel):
-    """Explicit emergency-page allowlist with no persistence or ownership metadata."""
+    """Explicit emergency-page allowlist with an opaque stable crypto context."""
 
+    profile_id: str
     display_name: str | None
     birth_year: int | None
     gender: Gender | None
@@ -424,6 +459,7 @@ class PublicProfileOutput(ProfileModel):
     important_conditions: list[str]
     critical_medications: list[str]
     emergency_note: str | None
+    private_profile_envelope: EncryptedPrivateProfileEnvelope | None = None
     emergency_contacts: list[EmergencyContactPublic]
     profile_updated_at: UtcDateTime
 
@@ -515,6 +551,7 @@ def to_authenticated_profile(profile: ProfileDocument) -> AuthenticatedProfileOu
     """Map a persisted profile to the allowlisted authenticated response."""
 
     return AuthenticatedProfileOutput(
+        profile_id=str(profile.id),
         display_name=profile.display_name,
         birth_year=profile.birth_year,
         gender=profile.gender,
@@ -524,6 +561,7 @@ def to_authenticated_profile(profile: ProfileDocument) -> AuthenticatedProfileOu
         critical_medications=list(profile.critical_medications),
         emergency_note=profile.emergency_note,
         location_alerts_enabled=profile.location_alerts_enabled,
+        private_profile_envelope=profile.private_profile_envelope,
         emergency_contacts=_authenticated_contacts(profile),
         created_at=profile.created_at,
         updated_at=profile.updated_at,
@@ -543,6 +581,7 @@ def to_public_profile(profile: ProfileDocument) -> PublicProfileOutput:
     """Map a persisted profile to the stable public emergency projection."""
 
     return PublicProfileOutput(
+        profile_id=str(profile.id),
         display_name=profile.display_name,
         birth_year=profile.birth_year,
         gender=profile.gender,
@@ -551,6 +590,7 @@ def to_public_profile(profile: ProfileDocument) -> PublicProfileOutput:
         important_conditions=list(profile.important_conditions),
         critical_medications=list(profile.critical_medications),
         emergency_note=profile.emergency_note,
+        private_profile_envelope=profile.private_profile_envelope,
         emergency_contacts=_public_contacts(profile),
         profile_updated_at=profile.updated_at,
     )

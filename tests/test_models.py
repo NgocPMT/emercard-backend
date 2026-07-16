@@ -106,6 +106,7 @@ def test_profile_view_wraps_profile_and_readiness() -> None:
     view = ProfileView.model_validate(
         {
             "profile": {
+                "profile_id": "profile-1",
                 "display_name": "Alex Example",
                 "birth_year": 1995,
                 "gender": "prefer_not_to_say",
@@ -239,6 +240,7 @@ def test_profile_state_ignores_legacy_public_link_state() -> None:
 def test_public_output_is_an_explicit_allowlist() -> None:
     output = PublicProfileOutput.model_validate(
         {
+            "profile_id": "profile-1",
             "display_name": "Alex Example",
             "birth_year": 1995,
             "gender": "prefer_not_to_say",

@@ -12,7 +12,10 @@ from emercard.modules.profiles.models import (
     EmergencyContactDocument,
     EmergencyContactInput,
     EmergencyContactPublic,
+    EncryptedPrivateProfileEnvelope,
     Gender,
+    PrivateProfileKdfParameters,
+    PrivateProfileKeyWrap,
     ProfileDashboardOutput,
     ProfileDocument,
     ProfileReadiness,
@@ -34,6 +37,9 @@ from emercard.modules.profiles.service import ProfileService
 
 __all__ = [
     "AuthenticatedProfileOutput",
+    "EncryptedPrivateProfileEnvelope",
+    "PrivateProfileKeyWrap",
+    "PrivateProfileKdfParameters",
     "EmergencyContactAuthenticated",
     "BloodType",
     "EmergencyContactDocument",

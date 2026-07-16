@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     auth_cookie_path: str = "/"
     auth_cookie_domain: str | None = None
     auth_clock_skew_seconds: Annotated[int, Field(ge=0, le=300)] = 30
+    private_profile_authorization_lifetime_seconds: Annotated[int, Field(ge=60, le=900)] = 300
 
     # Seed-script-only credentials; never used by the HTTP authentication flow.
     admin_email: str | None = None

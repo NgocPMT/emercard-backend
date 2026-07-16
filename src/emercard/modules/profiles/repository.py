@@ -252,7 +252,15 @@ class ProfileRepository:
 
 
 def _profile_fields(profile: ProfileUpsertInput) -> dict[str, Any]:
+    """Build editable fields while preserving omitted private ciphertext.
+
+    The private envelope is deliberately tri-state at the API boundary:
+    omitted means preserve, null means remove, and an object means replace.
+    """
+
     profile_fields = profile.model_dump(mode="python")
+    if "private_profile_envelope" not in profile.model_fields_set:
+        profile_fields.pop("private_profile_envelope", None)
     profile_fields["emergency_contacts"] = [
         EmergencyContactDocument.model_validate(contact.model_dump()).model_dump(mode="python")
         for contact in profile.emergency_contacts

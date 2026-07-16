@@ -52,10 +52,13 @@ class InMemoryProfileRepository:
             raise self.failure
         now = datetime.now(UTC)
         current_profile = self.profile is not None and str(self.profile.user_id) == user_id
+        profile_values = profile.model_dump(mode="python")
+        if current_profile and "private_profile_envelope" not in profile.model_fields_set:
+            profile_values["private_profile_envelope"] = self.profile.private_profile_envelope
         values: dict[str, Any] = {
             "_id": self.profile.id if current_profile else ObjectId(),
             "user_id": ObjectId(user_id),
-            **profile.model_dump(mode="python"),
+            **profile_values,
             "created_at": self.profile.created_at if current_profile else now,
             "updated_at": now,
             "public_access": (
@@ -147,6 +150,10 @@ def test_profile_routes_require_authentication() -> None:
             client.get("/api/v1/me/profile"),
             client.put("/api/v1/me/profile", json={}),
             client.get("/api/v1/me/profile/public-preview"),
+            client.post(
+                "/api/v1/me/profile/private/authorize",
+                json={"password": "password-123"},
+            ),
         ]
 
     for response in responses:
@@ -313,6 +320,153 @@ def test_profile_limits_and_blank_values_use_shared_validation_error(
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
     assert repository.upsert_calls == []
+
+
+def private_profile_envelope() -> dict[str, Any]:
+    return {
+        "version": 1,
+        "kdf": {
+            "algorithm": "argon2id",
+            "salt": "c2FsdC1mb3ItcHJpdmF0ZQ==",
+            "memory_cost_kib": 65_536,
+            "time_cost": 3,
+            "parallelism": 1,
+        },
+        "nonce": "bm9uY2UtMTIzNDU2Nzg=",
+        "ciphertext": "ZW5jcnlwdGVkLXByaXZhdGUtaW5mb3JtYXRpb24=",
+        "access_code_wrap": {
+            "algorithm": "aes-256-gcm",
+            "nonce": "d3JhcC1ub25jZS0xMjM=",
+            "ciphertext": "YWNjZXNzLWtleS13cmFwcGVk",
+        },
+        "recovery_key_wrap": {
+            "algorithm": "aes-256-gcm",
+            "nonce": "cmVjb3Zlcnktbm9uY2Ux",
+            "ciphertext": "cmVjb3Zlcnkta2V5LXdyYXBwZWQ=",
+        },
+    }
+
+
+def test_private_profile_changes_require_password_confirmation() -> None:
+    client, repository, _ = make_client(profile=None)
+    payload = {
+        "display_name": "Alex",
+        "critical_allergies": [],
+        "important_conditions": [],
+        "critical_medications": [],
+        "emergency_contacts": [],
+        "private_profile_envelope": private_profile_envelope(),
+    }
+    with client:
+        login(client)
+        missing_authorization = client.put("/api/v1/me/profile", json=payload)
+        authorization = client.post(
+            "/api/v1/me/profile/private/authorize",
+            json={"password": "password-123"},
+        )
+        authorized = client.put(
+            "/api/v1/me/profile",
+            json=payload,
+            headers={
+                "X-Private-Profile-Authorization": authorization.json()["authorization_token"]
+            },
+        )
+
+    assert missing_authorization.status_code == 401
+    assert missing_authorization.json()["error"]["code"] == (
+        "auth.private_profile_authorization_invalid"
+    )
+    assert authorization.status_code == 200
+    assert authorization.headers["cache-control"] == "no-store"
+    assert authorization.headers["referrer-policy"] == "no-referrer"
+    assert authorization.json()["purpose"] == "private_profile_write"
+    assert authorized.status_code == 200
+    assert authorized.json()["profile"]["private_profile_envelope"] == private_profile_envelope()
+    assert repository.profile is not None
+    assert repository.profile.private_profile_envelope is not None
+
+
+def test_private_profile_authorization_rejects_wrong_password_without_leaking_it() -> None:
+    client, _, _ = make_client(profile=None)
+    with client:
+        login(client)
+        response = client.post(
+            "/api/v1/me/profile/private/authorize",
+            headers={"X-Request-ID": "private-auth-1"},
+            json={"password": "wrong-password"},
+        )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "auth.invalid_credentials"
+    assert "wrong-password" not in response.text
+    assert "private-auth-1" in response.text
+
+
+def test_private_profile_input_rejects_plaintext_fields_and_unknown_envelope_fields() -> None:
+    client, repository, _ = make_client(profile=None)
+    with client:
+        login(client)
+        plaintext = client.put(
+            "/api/v1/me/profile",
+            json={
+                "critical_allergies": [],
+                "important_conditions": [],
+                "critical_medications": [],
+                "emergency_contacts": [],
+                "address": "123 Sensitive Street",
+            },
+        )
+        unknown_envelope = client.put(
+            "/api/v1/me/profile",
+            json={
+                "critical_allergies": [],
+                "important_conditions": [],
+                "critical_medications": [],
+                "emergency_contacts": [],
+                "private_profile_envelope": {
+                    **private_profile_envelope(),
+                    "address": "plaintext must be rejected",
+                },
+            },
+        )
+
+    assert plaintext.status_code == 422
+    assert unknown_envelope.status_code == 422
+    assert repository.upsert_calls == []
+
+
+def test_private_profile_envelope_can_be_explicitly_removed_with_authorization() -> None:
+    client, repository, _ = make_client(profile=None)
+    payload = {
+        "critical_allergies": [],
+        "important_conditions": [],
+        "critical_medications": [],
+        "emergency_contacts": [],
+        "private_profile_envelope": private_profile_envelope(),
+    }
+    with client:
+        login(client)
+        authorization = client.post(
+            "/api/v1/me/profile/private/authorize",
+            json={"password": "password-123"},
+        )
+        token = authorization.json()["authorization_token"]
+        created = client.put(
+            "/api/v1/me/profile",
+            json=payload,
+            headers={"X-Private-Profile-Authorization": token},
+        )
+        removed = client.put(
+            "/api/v1/me/profile",
+            json={**payload, "private_profile_envelope": None},
+            headers={"X-Private-Profile-Authorization": token},
+        )
+
+    assert created.status_code == 200
+    assert removed.status_code == 200
+    assert removed.json()["profile"]["private_profile_envelope"] is None
+    assert repository.profile is not None
+    assert repository.profile.private_profile_envelope is None
 
 
 def test_profile_persistence_failure_returns_safe_503() -> None:
