@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     location_provider_timeout_seconds: Annotated[float, Field(gt=0, le=60)] = 5.0
     email_provider_timeout_seconds: Annotated[float, Field(gt=0, le=60)] = 10.0
     google_geocoding_api_key: SecretStr | None = None
+    locationiq_api_key: SecretStr | None = None
     brevo_api_key: SecretStr | None = None
     brevo_sender_email: str = "alerts@example.com"
     brevo_sender_name: str = "EmerCard"

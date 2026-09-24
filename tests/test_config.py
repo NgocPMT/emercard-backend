@@ -122,3 +122,14 @@ def test_deployments_require_credentialed_exact_frontend_origin() -> None:
             public_profile_base_url="http://app.emercard.id.vn/e",
             cors_origins=["http://app.emercard.id.vn"],
         )
+
+
+def test_locationiq_api_key_configuration() -> None:
+    settings = Settings(
+        _env_file=None,
+        environment="test",
+        locationiq_api_key=SecretStr("test-locationiq-key"),
+    )
+    assert settings.locationiq_api_key is not None
+    assert settings.locationiq_api_key.get_secret_value() == "test-locationiq-key"
+
