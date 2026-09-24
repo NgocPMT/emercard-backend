@@ -9,13 +9,14 @@ from emercard.core.config import Settings
 from emercard.main import create_app
 from emercard.modules.location_alerts import (
     BrevoEmailDelivery,
-    GoogleReverseGeocoder,
     LocationAlertLimiter,
     LocationAlertRequest,
     LocationAlertResult,
     LocationAlertService,
+    LocationIQReverseGeocoder,
     ReverseGeocodedLocation,
 )
+from emercard.modules.location_alerts.providers import LocationProviderError
 from emercard.modules.profiles import ProfileDocument
 from emercard.modules.public_links.lookup import PrivatePublicProfileLookupResult
 
@@ -203,40 +204,75 @@ async def test_location_alert_skips_contacts_without_email() -> None:
 
 
 @pytest.mark.asyncio
-async def test_google_reverse_geocoder_uses_v4_field_mask_and_prefers_formatted_address() -> None:
+async def test_locationiq_reverse_geocoder_requests_vietnamese_and_parses_display_name() -> None:
     settings = Settings(
+        _env_file=None,
         environment="test",
-        google_geocoding_api_key=SecretStr("google-secret"),
+        locationiq_api_key=SecretStr("locationiq-secret"),
     )
-    client = FakeHttpClient(FakeResponse({"results": [{"formattedAddress": "Đường Đồng Khởi"}]}))
+    client = FakeHttpClient(
+        FakeResponse({"display_name": "Nhà thờ Đức Bà Sài Gòn, Quận 1, TP Hồ Chí Minh"})
+    )
 
-    result = await GoogleReverseGeocoder(settings, client=client).reverse(
+    result = await LocationIQReverseGeocoder(settings, client=client).reverse(
         latitude=10.7769,
         longitude=106.7009,
     )
 
-    assert result.nearby_place == "Đường Đồng Khởi"
-    assert client.get_calls[0]["url"] == "https://geocode.googleapis.com/v4/geocode/location/10.7769000,106.7009000"
-    assert client.get_calls[0]["params"] == {"languageCode": "vi"}
-    assert client.get_calls[0]["headers"] == {
-        "X-Goog-Api-Key": "google-secret",
-        "X-Goog-FieldMask": "results.formattedAddress",
+    assert result.nearby_place == "Nhà thờ Đức Bà Sài Gòn, Quận 1, TP Hồ Chí Minh"
+    assert result.map_url == "https://www.google.com/maps?q=10.7769000%2C106.7009000"
+    assert client.get_calls[0]["url"] == "https://us1.locationiq.com/v1/reverse"
+    assert client.get_calls[0]["params"] == {
+        "key": "locationiq-secret",
+        "lat": "10.7769000",
+        "lon": "106.7009000",
+        "format": "json",
+        "accept-language": "vi",
     }
-    assert "google-secret" not in str(client.get_calls[0]["url"])
 
 
 @pytest.mark.asyncio
-async def test_google_reverse_geocoder_falls_back_without_a_result() -> None:
-    settings = Settings(environment="test", google_geocoding_api_key=SecretStr("google-secret"))
-    client = FakeHttpClient(FakeResponse({"results": []}))
-
-    result = await GoogleReverseGeocoder(settings, client=client).reverse(
-        latitude=10,
-        longitude=20,
+async def test_locationiq_reverse_geocoder_falls_back_on_empty_display_name_or_404() -> None:
+    settings = Settings(
+        _env_file=None,
+        environment="test",
+        locationiq_api_key=SecretStr("locationiq-secret"),
     )
 
-    assert result.nearby_place == "vị trí được chia sẻ"
-    assert result.map_url == "https://www.google.com/maps?q=10.0000000%2C20.0000000"
+    # Case 1: 404 Unable to geocode (e.g. coordinates in open sea)
+    client_404 = FakeHttpClient(
+        FakeResponse({"error": "Unable to geocode"}, status_code=404)
+    )
+    result_404 = await LocationIQReverseGeocoder(settings, client=client_404).reverse(
+        latitude=10.0,
+        longitude=20.0,
+    )
+    assert result_404.nearby_place == "vị trí được chia sẻ"
+    assert result_404.map_url == "https://www.google.com/maps?q=10.0000000%2C20.0000000"
+
+    # Case 2: empty or whitespace display_name
+    client_empty = FakeHttpClient(FakeResponse({"display_name": "   "}))
+    result_empty = await LocationIQReverseGeocoder(settings, client=client_empty).reverse(
+        latitude=10.0,
+        longitude=20.0,
+    )
+    assert result_empty.nearby_place == "vị trí được chia sẻ"
+
+
+@pytest.mark.asyncio
+async def test_locationiq_reverse_geocoder_raises_location_provider_error_on_failure() -> None:
+    settings = Settings(
+        _env_file=None,
+        environment="test",
+        locationiq_api_key=SecretStr("locationiq-secret"),
+    )
+    client_error = FakeHttpClient(FakeResponse({"error": "Internal Error"}, status_code=500))
+
+    with pytest.raises(LocationProviderError):
+        await LocationIQReverseGeocoder(settings, client=client_error).reverse(
+            latitude=10.0,
+            longitude=20.0,
+        )
 
 
 @pytest.mark.asyncio

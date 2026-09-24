@@ -1,9 +1,9 @@
-"""Outbound Google reverse-geocoding and Brevo email adapters."""
+"""Outbound LocationIQ reverse-geocoding and Brevo email adapters."""
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 from urllib.parse import urlencode
 
 import httpx
@@ -37,8 +37,8 @@ class EmailDelivery(Protocol):
     ) -> str | None: ...
 
 
-class GoogleReverseGeocoder:
-    """Call Google's server-side reverse geocoding REST API."""
+class LocationIQReverseGeocoder:
+    """Call LocationIQ's server-side reverse geocoding REST API."""
 
     def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None) -> None:
         self._settings = settings
@@ -46,42 +46,35 @@ class GoogleReverseGeocoder:
 
     async def reverse(self, *, latitude: float, longitude: float) -> ReverseGeocodedLocation:
         map_url = _map_url(latitude, longitude)
-        params = {"languageCode": "vi"}
-        headers = {
-            "X-Goog-Api-Key": (
-                self._settings.google_geocoding_api_key.get_secret_value()
-                if self._settings.google_geocoding_api_key is not None
+        params = {
+            "key": (
+                self._settings.locationiq_api_key.get_secret_value()
+                if self._settings.locationiq_api_key is not None
                 else ""
             ),
-            "X-Goog-FieldMask": "results.formattedAddress",
+            "lat": f"{latitude:.7f}",
+            "lon": f"{longitude:.7f}",
+            "format": "json",
+            "accept-language": "vi",
         }
-        endpoint = (
-            "https://geocode.googleapis.com/v4/geocode/location/"
-            f"{latitude:.7f},{longitude:.7f}"
-        )
+        endpoint = "https://us1.locationiq.com/v1/reverse"
         try:
             if self._client is None:
                 async with httpx.AsyncClient(
                     timeout=self._settings.location_provider_timeout_seconds
                 ) as client:
-                    response = await client.get(endpoint, params=params, headers=headers)
+                    response = await client.get(endpoint, params=params)
             else:
-                response = await self._client.get(endpoint, params=params, headers=headers)
+                response = await self._client.get(endpoint, params=params)
+            if response.status_code == 404:
+                return ReverseGeocodedLocation(nearby_place="vị trí được chia sẻ", map_url=map_url)
             response.raise_for_status()
             payload: dict[str, Any] = response.json()
         except (httpx.HTTPError, ValueError) as error:
             raise LocationProviderError from error
 
-        results = payload.get("results")
-        nearby_place: str | None = None
-        if isinstance(results, list) and results:
-            first_result = cast(object, results[0])
-            if isinstance(first_result, dict):
-                candidate: object = cast(dict[str, object], first_result).get("formattedAddress")
-            else:
-                candidate = None
-            if isinstance(candidate, str):
-                nearby_place = candidate
+        display_name = payload.get("display_name")
+        nearby_place: str | None = display_name if isinstance(display_name, str) else None
         if not nearby_place or not nearby_place.strip():
             nearby_place = "vị trí được chia sẻ"
         return ReverseGeocodedLocation(nearby_place=nearby_place.strip(), map_url=map_url)

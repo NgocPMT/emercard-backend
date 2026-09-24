@@ -83,9 +83,10 @@ async def test_seed_admin_does_not_elevate_existing_user() -> None:
 
 def test_configured_credentials_require_both_environment_values() -> None:
     with pytest.raises(AdminSeedError, match="EMERCARD_ADMIN_EMAIL"):
-        configured_credentials(Settings(environment="test"))
+        configured_credentials(Settings(_env_file=None, environment="test"))
 
     settings = Settings(
+        _env_file=None,
         environment="test",
         admin_email="admin@example.com",
         admin_password=SecretStr("password-123"),
@@ -95,6 +96,7 @@ def test_configured_credentials_require_both_environment_values() -> None:
 
 def test_configured_credentials_reject_invalid_environment_values() -> None:
     settings = Settings(
+        _env_file=None,
         environment="test",
         admin_email="not-an-email",
         admin_password=SecretStr("short"),
