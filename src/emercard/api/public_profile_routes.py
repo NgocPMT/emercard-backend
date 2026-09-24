@@ -8,10 +8,10 @@ from emercard.modules.card_link_assignments import CardLinkAssignmentRepository
 from emercard.modules.link_access_history import LinkAccessHistoryRepository
 from emercard.modules.location_alerts import (
     BrevoEmailDelivery,
-    GoogleReverseGeocoder,
     LocationAlertRequest,
     LocationAlertResponse,
     LocationAlertService,
+    LocationIQReverseGeocoder,
     MongoLocationAlertAuditRepository,
 )
 from emercard.modules.profiles import ProfileRepository
@@ -65,7 +65,7 @@ async def get_location_alert_service(request: Request) -> LocationAlertService:
         )
     return LocationAlertService(
         lookup=lookup,
-        geocoder=GoogleReverseGeocoder(request.app.state.settings),
+        geocoder=LocationIQReverseGeocoder(request.app.state.settings),
         email_delivery=BrevoEmailDelivery(request.app.state.settings),
         audit_repository=audit_repository,
         limiter=request.app.state.location_alert_limiter,

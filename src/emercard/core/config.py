@@ -71,7 +71,6 @@ class Settings(BaseSettings):
     link_access_history_retention_seconds: Annotated[int, Field(ge=60, le=31_536_000)] = 7_776_000
     location_provider_timeout_seconds: Annotated[float, Field(gt=0, le=60)] = 5.0
     email_provider_timeout_seconds: Annotated[float, Field(gt=0, le=60)] = 10.0
-    google_geocoding_api_key: SecretStr | None = None
     locationiq_api_key: SecretStr | None = None
     brevo_api_key: SecretStr | None = None
     brevo_sender_email: str = "alerts@example.com"
@@ -247,9 +246,9 @@ class Settings(BaseSettings):
                 raise ValueError("frontend_base_url must be included in cors_origins")
             if not self.public_profile_base_url.startswith("https://"):
                 raise ValueError("public_profile_base_url must use https for deployments")
-            google_key = self.google_geocoding_api_key
-            if google_key is None or not google_key.get_secret_value():
-                raise ValueError("google_geocoding_api_key is required for deployments")
+            locationiq_key = self.locationiq_api_key
+            if locationiq_key is None or not locationiq_key.get_secret_value():
+                raise ValueError("locationiq_api_key is required for deployments")
             if self.brevo_api_key is None or not self.brevo_api_key.get_secret_value():
                 raise ValueError("brevo_api_key is required for deployments")
         if self.auth_cookie_same_site == "none" and not self.auth_cookie_secure:

@@ -59,6 +59,7 @@ def test_wildcard_cors_origin_is_rejected() -> None:
 
 def test_persistence_and_auth_ready_settings_are_validated() -> None:
     settings = Settings(
+        _env_file=None,
         environment="demo",
         debug=False,
         auth_secret=SecretStr("x" * 32),
@@ -67,6 +68,8 @@ def test_persistence_and_auth_ready_settings_are_validated() -> None:
         cors_allow_credentials=True,
         frontend_base_url="https://demo.example.com",
         public_profile_base_url="https://demo.example.com/e",
+        locationiq_api_key=SecretStr("test-locationiq-key"),
+        brevo_api_key=SecretStr("test-brevo-key"),
         mongodb_index_initialization_mode="startup",
         public_link_route_prefix="/public",
     )
@@ -132,4 +135,23 @@ def test_locationiq_api_key_configuration() -> None:
     )
     assert settings.locationiq_api_key is not None
     assert settings.locationiq_api_key.get_secret_value() == "test-locationiq-key"
+
+
+def test_deployment_requires_locationiq_api_key() -> None:
+    with pytest.raises(ValidationError, match="locationiq_api_key"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            debug=False,
+            auth_secret=SecretStr("x" * 32),
+            auth_cookie_secure=True,
+            cors_allow_credentials=True,
+            cors_origins=["https://app.emercard.id.vn"],
+            frontend_base_url="https://app.emercard.id.vn",
+            public_profile_base_url="https://app.emercard.id.vn/e",
+            mongodb_tls_required=True,
+            brevo_api_key=SecretStr("brevo-secret"),
+            locationiq_api_key=None,
+        )
+
 

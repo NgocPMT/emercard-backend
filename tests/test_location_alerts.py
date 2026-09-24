@@ -9,7 +9,6 @@ from emercard.core.config import Settings
 from emercard.main import create_app
 from emercard.modules.location_alerts import (
     BrevoEmailDelivery,
-    GoogleReverseGeocoder,
     LocationAlertLimiter,
     LocationAlertRequest,
     LocationAlertResult,
@@ -202,43 +201,6 @@ async def test_location_alert_skips_contacts_without_email() -> None:
     assert geocoder.calls == []
     assert email.calls == []
     assert audit.events[0]["status"] == "unavailable"
-
-
-@pytest.mark.asyncio
-async def test_google_reverse_geocoder_uses_v4_field_mask_and_prefers_formatted_address() -> None:
-    settings = Settings(
-        environment="test",
-        google_geocoding_api_key=SecretStr("google-secret"),
-    )
-    client = FakeHttpClient(FakeResponse({"results": [{"formattedAddress": "Đường Đồng Khởi"}]}))
-
-    result = await GoogleReverseGeocoder(settings, client=client).reverse(
-        latitude=10.7769,
-        longitude=106.7009,
-    )
-
-    assert result.nearby_place == "Đường Đồng Khởi"
-    assert client.get_calls[0]["url"] == "https://geocode.googleapis.com/v4/geocode/location/10.7769000,106.7009000"
-    assert client.get_calls[0]["params"] == {"languageCode": "vi"}
-    assert client.get_calls[0]["headers"] == {
-        "X-Goog-Api-Key": "google-secret",
-        "X-Goog-FieldMask": "results.formattedAddress",
-    }
-    assert "google-secret" not in str(client.get_calls[0]["url"])
-
-
-@pytest.mark.asyncio
-async def test_google_reverse_geocoder_falls_back_without_a_result() -> None:
-    settings = Settings(environment="test", google_geocoding_api_key=SecretStr("google-secret"))
-    client = FakeHttpClient(FakeResponse({"results": []}))
-
-    result = await GoogleReverseGeocoder(settings, client=client).reverse(
-        latitude=10,
-        longitude=20,
-    )
-
-    assert result.nearby_place == "vị trí được chia sẻ"
-    assert result.map_url == "https://www.google.com/maps?q=10.0000000%2C20.0000000"
 
 
 @pytest.mark.asyncio
