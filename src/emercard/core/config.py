@@ -71,7 +71,11 @@ class Settings(BaseSettings):
     link_access_history_retention_seconds: Annotated[int, Field(ge=60, le=31_536_000)] = 7_776_000
     location_provider_timeout_seconds: Annotated[float, Field(gt=0, le=60)] = 5.0
     email_provider_timeout_seconds: Annotated[float, Field(gt=0, le=60)] = 10.0
+    sms_provider_timeout_seconds: Annotated[float, Field(gt=0, le=60)] = 10.0
     locationiq_api_key: SecretStr | None = None
+    speedsms_access_token: SecretStr | None = None
+    speedsms_sms_type: Annotated[int, Field(ge=1, le=5)] = 2
+    speedsms_api_base_url: str = "https://api.speedsms.vn/index.php"
     brevo_api_key: SecretStr | None = None
     brevo_sender_email: str = "alerts@example.com"
     brevo_sender_name: str = "EmerCard"
@@ -145,6 +149,15 @@ class Settings(BaseSettings):
         parsed = urlparse(normalized)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("frontend_base_url must be an absolute http(s) URL")
+        return normalized
+
+    @field_validator("speedsms_api_base_url")
+    @classmethod
+    def validate_speedsms_api_base_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("speedsms_api_base_url must be an absolute http(s) URL")
         return normalized
 
     @field_validator("public_card_base_url", "public_profile_base_url")

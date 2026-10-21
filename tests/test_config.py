@@ -137,6 +137,29 @@ def test_locationiq_api_key_configuration() -> None:
     assert settings.locationiq_api_key.get_secret_value() == "test-locationiq-key"
 
 
+def test_speedsms_configuration_defaults_and_parsing() -> None:
+    settings = Settings(
+        _env_file=None,
+        environment="test",
+        speedsms_access_token=SecretStr("test-speedsms-token"),
+        speedsms_sms_type=2,
+    )
+    assert settings.speedsms_access_token is not None
+    assert settings.speedsms_access_token.get_secret_value() == "test-speedsms-token"
+    assert settings.speedsms_sms_type == 2
+    assert settings.sms_provider_timeout_seconds == 10.0
+    assert settings.speedsms_api_base_url == "https://api.speedsms.vn/index.php"
+
+
+def test_speedsms_api_base_url_validation() -> None:
+    with pytest.raises(ValidationError, match="speedsms_api_base_url"):
+        Settings(
+            _env_file=None,
+            environment="test",
+            speedsms_api_base_url="invalid-url",
+        )
+
+
 def test_deployment_requires_locationiq_api_key() -> None:
     with pytest.raises(ValidationError, match="locationiq_api_key"):
         Settings(
