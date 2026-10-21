@@ -15,6 +15,10 @@ from emercard.modules.location_alerts import (
     LocationAlertService,
     LocationIQReverseGeocoder,
     ReverseGeocodedLocation,
+    SmsProviderError,
+    SpeedSmsDelivery,
+    format_location_alert_sms,
+    strip_vietnamese_accents,
 )
 from emercard.modules.location_alerts.providers import LocationProviderError
 from emercard.modules.profiles import ProfileDocument
@@ -338,3 +342,111 @@ def test_location_alert_route_never_returns_contact_email() -> None:
     assert response.status_code == 200
     assert response.json() == {"status": "sent"}
     assert "contact@example.com" not in response.text
+
+
+def test_strip_vietnamese_accents() -> None:
+    assert strip_vietnamese_accents("Nguyễn Văn A") == "Nguyen Van A"
+    assert strip_vietnamese_accents("Đà Nẵng") == "Da Nang"
+    assert strip_vietnamese_accents("Bệnh viện Chợ Rẫy") == "Benh vien Cho Ray"
+
+
+def test_format_location_alert_sms_fits_single_segment() -> None:
+    message = format_location_alert_sms(
+        display_name="Nguyễn Văn A",
+        nearby_place="Bệnh viện Chợ Rẫy, Phường 12, Quận 5, TP Hồ Chí Minh",
+        map_url="https://www.google.com/maps?q=10.7578291,106.6598212",
+        max_length=160,
+    )
+    assert len(message) <= 160
+    assert "https://www.google.com/maps?q=" in message
+    assert "Nguyen Van A" in message
+    assert "[EmerCard]" in message
+
+
+@pytest.mark.asyncio
+async def test_speedsms_delivery_success() -> None:
+    settings = Settings(
+        environment="test",
+        speedsms_access_token=SecretStr("test-token"),
+        speedsms_sms_type=2,
+    )
+    client = FakeHttpClient(
+        FakeResponse(
+            {
+                "status": "success",
+                "code": "00",
+                "data": {"tranId": 12345678, "totalSMS": 1, "totalPrice": 250, "invalidPhone": []},
+            }
+        )
+    )
+    delivery = SpeedSmsDelivery(settings, client=client)  # type: ignore[arg-type]
+    tran_id = await delivery.send_location_alert(
+        recipient_phone="0912345678",
+        display_name="Nguyen Van A",
+        nearby_place="Ben Thanh",
+        map_url="https://www.google.com/maps?q=10.77,106.69",
+        occurred_at=datetime(2026, 1, 1, 10, 30, tzinfo=UTC),
+        accuracy_meters=20.0,
+    )
+
+    assert tran_id == "12345678"
+    assert len(client.post_calls) == 1
+    call = client.post_calls[0]
+    assert call["url"] == "https://api.speedsms.vn/index.php/sms/send"
+    payload = call["json"]
+    assert isinstance(payload, dict)
+    assert payload["to"] == ["0912345678"]
+    assert payload["sms_type"] == 2
+    assert len(str(payload["content"])) <= 160
+
+
+@pytest.mark.asyncio
+async def test_speedsms_delivery_handles_api_errors() -> None:
+    settings = Settings(
+        environment="test",
+        speedsms_access_token=SecretStr("test-token"),
+        speedsms_sms_type=2,
+    )
+    error_client = FakeHttpClient(
+        FakeResponse({"status": "error", "code": "300", "message": "Balance not enough"})
+    )
+    delivery = SpeedSmsDelivery(settings, client=error_client)  # type: ignore[arg-type]
+
+    with pytest.raises(SmsProviderError, match="Balance not enough"):
+        await delivery.send_location_alert(
+            recipient_phone="0912345678",
+            display_name="Nguyen Van A",
+            nearby_place="Ben Thanh",
+            map_url="https://www.google.com/maps?q=10.77,106.69",
+            occurred_at=datetime(2026, 1, 1, 10, 30, tzinfo=UTC),
+            accuracy_meters=20.0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_speedsms_delivery_rejects_invalid_phone() -> None:
+    settings = Settings(
+        environment="test",
+        speedsms_access_token=SecretStr("test-token"),
+        speedsms_sms_type=2,
+    )
+    invalid_phone_client = FakeHttpClient(
+        FakeResponse(
+            {
+                "status": "success",
+                "code": "00",
+                "data": {"tranId": 12345678, "invalidPhone": ["0912345678"]},
+            }
+        )
+    )
+    delivery = SpeedSmsDelivery(settings, client=invalid_phone_client)  # type: ignore[arg-type]
+
+    with pytest.raises(SmsProviderError, match="invalid"):
+        await delivery.send_location_alert(
+            recipient_phone="0912345678",
+            display_name="Nguyen Van A",
+            nearby_place="Ben Thanh",
+            map_url="https://www.google.com/maps?q=10.77,106.69",
+            occurred_at=datetime(2026, 1, 1, 10, 30, tzinfo=UTC),
+            accuracy_meters=20.0,
+        )
