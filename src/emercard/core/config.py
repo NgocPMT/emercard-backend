@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     locationiq_api_key: SecretStr | None = None
     speedsms_access_token: SecretStr | None = None
     speedsms_sms_type: Annotated[int, Field(ge=1, le=5)] = 2
+    speedsms_sender: str = ""
     speedsms_api_base_url: str = "https://api.speedsms.vn/index.php"
 
     # Reserved for the authentication stage; no authentication is implemented here.

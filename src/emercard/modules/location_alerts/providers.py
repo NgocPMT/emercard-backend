@@ -154,7 +154,7 @@ class SpeedSmsDelivery:
             "to": [recipient_phone],
             "content": content,
             "sms_type": self._settings.speedsms_sms_type,
-            "sender": "",
+            "sender": self._settings.speedsms_sender,
         }
         endpoint = f"{self._settings.speedsms_api_base_url.rstrip('/')}/sms/send"
         auth = httpx.BasicAuth(username=token, password="x")
