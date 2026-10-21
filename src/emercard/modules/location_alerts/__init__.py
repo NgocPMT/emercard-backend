@@ -7,8 +7,6 @@ from emercard.modules.location_alerts.models import (
     ReverseGeocodedLocation,
 )
 from emercard.modules.location_alerts.providers import (
-    BrevoEmailDelivery,
-    EmailDelivery,
     LocationIQReverseGeocoder,
     ReverseGeocoder,
     SmsDelivery,
@@ -28,8 +26,6 @@ from emercard.modules.location_alerts.service import (
 )
 
 __all__ = [
-    "BrevoEmailDelivery",
-    "EmailDelivery",
     "LocationAlertAuditRepository",
     "LocationAlertExternalError",
     "LocationAlertLimiter",

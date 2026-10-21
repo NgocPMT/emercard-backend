@@ -7,12 +7,12 @@ from fastapi import APIRouter, Depends, Request
 from emercard.modules.card_link_assignments import CardLinkAssignmentRepository
 from emercard.modules.link_access_history import LinkAccessHistoryRepository
 from emercard.modules.location_alerts import (
-    BrevoEmailDelivery,
     LocationAlertRequest,
     LocationAlertResponse,
     LocationAlertService,
     LocationIQReverseGeocoder,
     MongoLocationAlertAuditRepository,
+    SpeedSmsDelivery,
 )
 from emercard.modules.profiles import ProfileRepository
 from emercard.modules.public_links import (
@@ -66,7 +66,7 @@ async def get_location_alert_service(request: Request) -> LocationAlertService:
     return LocationAlertService(
         lookup=lookup,
         geocoder=LocationIQReverseGeocoder(request.app.state.settings),
-        email_delivery=BrevoEmailDelivery(request.app.state.settings),
+        sms_delivery=SpeedSmsDelivery(request.app.state.settings),
         audit_repository=audit_repository,
         limiter=request.app.state.location_alert_limiter,
     )

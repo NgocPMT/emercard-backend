@@ -69,7 +69,7 @@ def test_persistence_and_auth_ready_settings_are_validated() -> None:
         frontend_base_url="https://demo.example.com",
         public_profile_base_url="https://demo.example.com/e",
         locationiq_api_key=SecretStr("test-locationiq-key"),
-        brevo_api_key=SecretStr("test-brevo-key"),
+        speedsms_access_token=SecretStr("test-speedsms-token"),
         mongodb_index_initialization_mode="startup",
         public_link_route_prefix="/public",
     )
@@ -173,8 +173,26 @@ def test_deployment_requires_locationiq_api_key() -> None:
             frontend_base_url="https://app.emercard.id.vn",
             public_profile_base_url="https://app.emercard.id.vn/e",
             mongodb_tls_required=True,
-            brevo_api_key=SecretStr("brevo-secret"),
+            speedsms_access_token=SecretStr("speedsms-secret"),
             locationiq_api_key=None,
+        )
+
+
+def test_deployment_requires_speedsms_access_token() -> None:
+    with pytest.raises(ValidationError, match="speedsms_access_token"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            debug=False,
+            auth_secret=SecretStr("x" * 32),
+            auth_cookie_secure=True,
+            cors_allow_credentials=True,
+            cors_origins=["https://app.emercard.id.vn"],
+            frontend_base_url="https://app.emercard.id.vn",
+            public_profile_base_url="https://app.emercard.id.vn/e",
+            mongodb_tls_required=True,
+            locationiq_api_key=SecretStr("locationiq-secret"),
+            speedsms_access_token=None,
         )
 
 

@@ -1,4 +1,4 @@
-"""Outbound LocationIQ reverse-geocoding, SpeedSMS, and Brevo adapters."""
+"""Outbound LocationIQ reverse-geocoding and SpeedSMS adapters."""
 
 from __future__ import annotations
 
@@ -17,10 +17,6 @@ class LocationProviderError(RuntimeError):
     """An external location provider could not answer safely."""
 
 
-class EmailProviderError(RuntimeError):
-    """An external email provider could not accept the message."""
-
-
 class SmsProviderError(RuntimeError):
     """An external SMS provider could not accept the message."""
 
@@ -34,19 +30,6 @@ class SmsDelivery(Protocol):
         self,
         *,
         recipient_phone: str,
-        display_name: str | None,
-        nearby_place: str,
-        map_url: str,
-        occurred_at: datetime,
-        accuracy_meters: float,
-    ) -> str | None: ...
-
-
-class EmailDelivery(Protocol):
-    async def send_location_alert(
-        self,
-        *,
-        recipient: str,
         display_name: str | None,
         nearby_place: str,
         map_url: str,
@@ -96,79 +79,6 @@ class LocationIQReverseGeocoder:
         if not nearby_place or not nearby_place.strip():
             nearby_place = "vị trí được chia sẻ"
         return ReverseGeocodedLocation(nearby_place=nearby_place.strip(), map_url=map_url)
-
-
-class BrevoEmailDelivery:
-    """Send transactional location alerts through Brevo's SMTP API."""
-
-    def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None) -> None:
-        self._settings = settings
-        self._client = client
-
-    async def send_location_alert(
-        self,
-        *,
-        recipient: str,
-        display_name: str | None,
-        nearby_place: str,
-        map_url: str,
-        occurred_at: datetime,
-        accuracy_meters: float,
-    ) -> str | None:
-        holder = (
-            display_name.strip()
-            if display_name and display_name.strip()
-            else "một người dùng EmerCard"
-        )
-        timestamp = occurred_at.astimezone().strftime("%d/%m/%Y %H:%M")
-        subject = "Cảnh báo EmerCard: vị trí được chia sẻ"
-        text = (
-            f"Xin chào,\n\n"
-            f"Có người vừa quét EmerCard của {holder} và chia sẻ vị trí gần {nearby_place}.\n\n"
-            f"Thời gian: {timestamp}\n"
-            f"Độ chính xác ước tính: khoảng {round(accuracy_meters)} mét.\n"
-            f"Bản đồ: {map_url}\n\n"
-            "Vị trí do trình duyệt cung cấp và có thể không chính xác tuyệt đối. "
-            "Đây là email tự động từ EmerCard."
-        )
-        html = "<br>".join(_escape_html(line) for line in text.splitlines())
-        payload: dict[str, Any] = {
-            "sender": {
-                "email": self._settings.brevo_sender_email,
-                "name": self._settings.brevo_sender_name,
-            },
-            "to": [{"email": recipient}],
-            "subject": subject,
-            "textContent": text,
-            "htmlContent": html,
-        }
-        if self._settings.brevo_reply_to_email:
-            payload["replyTo"] = {"email": self._settings.brevo_reply_to_email}
-        headers = {
-            "accept": "application/json",
-            "api-key": self._settings.brevo_api_key.get_secret_value()
-            if self._settings.brevo_api_key is not None
-            else "",
-            "content-type": "application/json",
-        }
-        try:
-            if self._client is None:
-                async with httpx.AsyncClient(
-                    timeout=self._settings.email_provider_timeout_seconds
-                ) as client:
-                    response = await client.post(
-                        "https://api.brevo.com/v3/smtp/email", headers=headers, json=payload
-                    )
-            else:
-                response = await self._client.post(
-                    "https://api.brevo.com/v3/smtp/email", headers=headers, json=payload
-                )
-            response.raise_for_status()
-            body = response.json()
-        except (httpx.HTTPError, ValueError) as error:
-            raise EmailProviderError from error
-        message_id = body.get("messageId")
-        return message_id if isinstance(message_id, str) else None
 
 
 def strip_vietnamese_accents(text: str) -> str:
@@ -285,14 +195,4 @@ class SpeedSmsDelivery:
 def _map_url(latitude: float, longitude: float) -> str:
     return "https://www.google.com/maps?" + urlencode(
         {"q": f"{latitude:.7f},{longitude:.7f}"}
-    )
-
-
-def _escape_html(value: str) -> str:
-    return (
-        value.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-        .replace("'", "&#39;")
     )
