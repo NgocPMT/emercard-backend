@@ -8,13 +8,18 @@ from pydantic import SecretStr, ValidationError
 from emercard.core.config import Settings
 from emercard.main import create_app
 from emercard.modules.location_alerts import (
-    BrevoEmailDelivery,
+    AndroidSmsDelivery,
+    LocationAlertExternalError,
     LocationAlertLimiter,
     LocationAlertRequest,
     LocationAlertResult,
     LocationAlertService,
     LocationIQReverseGeocoder,
     ReverseGeocodedLocation,
+    SmsProviderError,
+    SpeedSmsDelivery,
+    format_location_alert_sms,
+    strip_vietnamese_accents,
 )
 from emercard.modules.location_alerts.providers import LocationProviderError
 from emercard.modules.profiles import ProfileDocument
@@ -75,13 +80,13 @@ class FakeGeocoder:
         )
 
 
-class FakeEmailDelivery:
+class FakeSmsDelivery:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
     async def send_location_alert(self, **kwargs: object) -> str:
         self.calls.append(kwargs)
-        return "<brevo-message-id>"
+        return "<speedsms-tran-id>"
 
 
 class FakeAudit:
@@ -92,7 +97,17 @@ class FakeAudit:
         self.events.append(kwargs)
 
 
-def profile(*, enabled: bool = True, email: str | None = "contact@example.com") -> ProfileDocument:
+def profile(*, enabled: bool = True, phone: str | None = "0901234567") -> ProfileDocument:
+    contacts: list[dict[str, object]] = []
+    if phone:
+        contacts.append(
+            {
+                "name": "Sam Example",
+                "relationship": "Friend",
+                "phone": phone,
+                "email": "contact@example.com",
+            }
+        )
     return ProfileDocument.model_validate(
         {
             "_id": "507f1f77bcf86cd799439011",
@@ -105,14 +120,7 @@ def profile(*, enabled: bool = True, email: str | None = "contact@example.com") 
             "important_conditions": [],
             "critical_medications": [],
             "location_alerts_enabled": enabled,
-            "emergency_contacts": [
-                {
-                    "name": "Sam Example",
-                    "relationship": "Friend",
-                    "phone": "0901234567",
-                    "email": email,
-                }
-            ],
+            "emergency_contacts": contacts,
             "created_at": "2026-01-01T00:00:00Z",
             "updated_at": "2026-01-01T00:00:00Z",
         }
@@ -130,14 +138,14 @@ def request() -> LocationAlertRequest:
 
 def service_for(
     profile_document: ProfileDocument,
-) -> tuple[LocationAlertService, FakeGeocoder, FakeEmailDelivery, FakeAudit]:
+) -> tuple[LocationAlertService, FakeGeocoder, FakeSmsDelivery, FakeAudit]:
     geocoder = FakeGeocoder()
-    email = FakeEmailDelivery()
+    sms = FakeSmsDelivery()
     audit = FakeAudit()
     service = LocationAlertService(
         lookup=FakeLookup(profile_document),
         geocoder=geocoder,
-        email_delivery=email,
+        sms_delivery=sms,
         audit_repository=audit,
         limiter=LocationAlertLimiter(
             token_cooldown_seconds=300,
@@ -145,7 +153,7 @@ def service_for(
             ip_burst=5,
         ),
     )
-    return service, geocoder, email, audit
+    return service, geocoder, sms, audit
 
 
 @pytest.mark.parametrize(
@@ -161,45 +169,45 @@ def test_location_alert_request_rejects_invalid_coordinates(field: str, value: f
 
 @pytest.mark.asyncio
 async def test_location_alert_sends_nearby_place_and_map_link_without_public_contact_data() -> None:
-    service, geocoder, email, audit = service_for(profile())
+    service, geocoder, sms, audit = service_for(profile())
 
     result = await service.send(token="public-token", request=request(), client_key="127.0.0.1")
 
     assert result == LocationAlertResult(
         status="sent",
-        provider_id="<brevo-message-id>",
+        provider_id="<speedsms-tran-id>",
         recipient_count=1,
         nearby_place="Ben Thanh Market, Ho Chi Minh City",
     )
     assert geocoder.calls == [(10.772, 106.698)]
-    assert email.calls[0]["recipient"] == "contact@example.com"
-    assert email.calls[0]["nearby_place"] == "Ben Thanh Market, Ho Chi Minh City"
+    assert sms.calls[0]["recipient_phone"] == "0901234567"
+    assert sms.calls[0]["nearby_place"] == "Ben Thanh Market, Ho Chi Minh City"
     assert audit.events[0]["status"] == "sent"
     assert "public-token" not in str(audit.events[0])
-    assert "contact@example.com" not in str(audit.events[0])
+    assert "0901234567" not in str(audit.events[0])
 
 
 @pytest.mark.asyncio
 async def test_location_alert_requires_owner_opt_in_and_does_not_call_providers() -> None:
-    service, geocoder, email, audit = service_for(profile(enabled=False))
+    service, geocoder, sms, audit = service_for(profile(enabled=False))
 
     result = await service.send(token="public-token", request=request(), client_key="127.0.0.1")
 
     assert result.status == "unavailable"
     assert geocoder.calls == []
-    assert email.calls == []
+    assert sms.calls == []
     assert audit.events[0]["status"] == "unavailable"
 
 
 @pytest.mark.asyncio
-async def test_location_alert_skips_contacts_without_email() -> None:
-    service, geocoder, email, audit = service_for(profile(email=None))
+async def test_location_alert_skips_contacts_without_phone() -> None:
+    service, geocoder, sms, audit = service_for(profile(phone=None))
 
     result = await service.send(token="public-token", request=request(), client_key="127.0.0.1")
 
     assert result.status == "unavailable"
     assert geocoder.calls == []
-    assert email.calls == []
+    assert sms.calls == []
     assert audit.events[0]["status"] == "unavailable"
 
 
@@ -275,37 +283,35 @@ async def test_locationiq_reverse_geocoder_raises_location_provider_error_on_fai
         )
 
 
+class FailingSmsDelivery:
+    async def send_location_alert(self, **kwargs: object) -> str:
+        raise SmsProviderError("SpeedSMS network failure")
+
+
 @pytest.mark.asyncio
-async def test_brevo_email_contains_only_alert_context() -> None:
-    settings = Settings(
-        environment="test",
-        brevo_api_key=SecretStr("brevo-secret"),
-        brevo_sender_email="alerts@example.com",
-        brevo_reply_to_email="reply@example.com",
-    )
-    client = FakeHttpClient(FakeResponse({"messageId": "message-1"}))
-
-    result = await BrevoEmailDelivery(settings, client=client).send_location_alert(
-        recipient="contact@example.com",
-        display_name="Alex Example",
-        nearby_place="Đường Đồng Khởi",
-        map_url="https://www.google.com/maps?q=10,20",
-        occurred_at=datetime(2026, 1, 1, 10, 30, tzinfo=UTC),
-        accuracy_meters=25,
+async def test_location_alert_service_raises_external_error_on_sms_failure() -> None:
+    audit = FakeAudit()
+    service = LocationAlertService(
+        lookup=FakeLookup(profile()),
+        geocoder=FakeGeocoder(),
+        sms_delivery=FailingSmsDelivery(),
+        audit_repository=audit,
+        limiter=LocationAlertLimiter(
+            token_cooldown_seconds=300,
+            ip_window_seconds=3600,
+            ip_burst=5,
+        ),
     )
 
-    assert result == "message-1"
-    payload = client.post_calls[0]["json"]
-    assert isinstance(payload, dict)
-    assert payload["to"] == [{"email": "contact@example.com"}]
-    assert "Đường Đồng Khởi" in payload["textContent"]
-    assert "https://www.google.com/maps?q=10,20" in payload["textContent"]
-    assert "brevo-secret" not in str(payload)
+    with pytest.raises(LocationAlertExternalError):
+        await service.send(token="public-token", request=request(), client_key="127.0.0.1")
+
+    assert audit.events[0]["status"] == "provider_error"
 
 
 @pytest.mark.asyncio
 async def test_location_alert_cooldown_prevents_duplicate_delivery() -> None:
-    service, geocoder, email, _ = service_for(profile())
+    service, geocoder, sms, _ = service_for(profile())
 
     first = await service.send(token="public-token", request=request(), client_key="127.0.0.1")
     second = await service.send(token="public-token", request=request(), client_key="127.0.0.1")
@@ -313,10 +319,10 @@ async def test_location_alert_cooldown_prevents_duplicate_delivery() -> None:
     assert first.status == "sent"
     assert second.status == "cooldown"
     assert len(geocoder.calls) == 1
-    assert len(email.calls) == 1
+    assert len(sms.calls) == 1
 
 
-def test_location_alert_route_never_returns_contact_email() -> None:
+def test_location_alert_route_never_returns_contact_phone_or_email() -> None:
     service, _, _, _ = service_for(profile())
     settings = Settings(
         environment="test",
@@ -337,4 +343,206 @@ def test_location_alert_route_never_returns_contact_email() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "sent"}
+    assert "0901234567" not in response.text
     assert "contact@example.com" not in response.text
+
+
+def test_strip_vietnamese_accents() -> None:
+    assert strip_vietnamese_accents("Nguyễn Văn A") == "Nguyen Van A"
+    assert strip_vietnamese_accents("Đà Nẵng") == "Da Nang"
+    assert strip_vietnamese_accents("Bệnh viện Chợ Rẫy") == "Benh vien Cho Ray"
+
+
+def test_format_location_alert_sms_fits_single_segment() -> None:
+    message = format_location_alert_sms(
+        display_name="Nguyễn Văn A",
+        nearby_place="Bệnh viện Chợ Rẫy, Phường 12, Quận 5, TP Hồ Chí Minh",
+        map_url="https://www.google.com/maps?q=10.7578291,106.6598212",
+        max_length=160,
+    )
+    assert len(message) <= 160
+    assert "https://www.google.com/maps?q=" in message
+    assert "Nguyen Van A" in message
+    assert "[EmerCard]" in message
+
+
+@pytest.mark.asyncio
+async def test_speedsms_delivery_success() -> None:
+    settings = Settings(
+        environment="test",
+        speedsms_access_token=SecretStr("test-token"),
+        speedsms_sms_type=2,
+    )
+    client = FakeHttpClient(
+        FakeResponse(
+            {
+                "status": "success",
+                "code": "00",
+                "data": {"tranId": 12345678, "totalSMS": 1, "totalPrice": 250, "invalidPhone": []},
+            }
+        )
+    )
+    delivery = SpeedSmsDelivery(settings, client=client)  # type: ignore[arg-type]
+    tran_id = await delivery.send_location_alert(
+        recipient_phone="0912345678",
+        display_name="Nguyen Van A",
+        nearby_place="Ben Thanh",
+        map_url="https://www.google.com/maps?q=10.77,106.69",
+        occurred_at=datetime(2026, 1, 1, 10, 30, tzinfo=UTC),
+        accuracy_meters=20.0,
+    )
+
+    assert tran_id == "12345678"
+    assert len(client.post_calls) == 1
+    call = client.post_calls[0]
+    assert call["url"] == "https://api.speedsms.vn/index.php/sms/send"
+    payload = call["json"]
+    assert isinstance(payload, dict)
+    assert payload["to"] == ["0912345678"]
+    assert payload["sms_type"] == 2
+    assert len(str(payload["content"])) <= 160
+
+
+@pytest.mark.asyncio
+async def test_speedsms_delivery_handles_api_errors() -> None:
+    settings = Settings(
+        environment="test",
+        speedsms_access_token=SecretStr("test-token"),
+        speedsms_sms_type=2,
+    )
+    error_client = FakeHttpClient(
+        FakeResponse({"status": "error", "code": "300", "message": "Balance not enough"})
+    )
+    delivery = SpeedSmsDelivery(settings, client=error_client)  # type: ignore[arg-type]
+
+    with pytest.raises(SmsProviderError, match="Balance not enough"):
+        await delivery.send_location_alert(
+            recipient_phone="0912345678",
+            display_name="Nguyen Van A",
+            nearby_place="Ben Thanh",
+            map_url="https://www.google.com/maps?q=10.77,106.69",
+            occurred_at=datetime(2026, 1, 1, 10, 30, tzinfo=UTC),
+            accuracy_meters=20.0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_speedsms_delivery_rejects_invalid_phone() -> None:
+    settings = Settings(
+        environment="test",
+        speedsms_access_token=SecretStr("test-token"),
+        speedsms_sms_type=2,
+    )
+    invalid_phone_client = FakeHttpClient(
+        FakeResponse(
+            {
+                "status": "success",
+                "code": "00",
+                "data": {"tranId": 12345678, "invalidPhone": ["0912345678"]},
+            }
+        )
+    )
+    delivery = SpeedSmsDelivery(settings, client=invalid_phone_client)  # type: ignore[arg-type]
+
+    with pytest.raises(SmsProviderError, match="invalid"):
+        await delivery.send_location_alert(
+            recipient_phone="0912345678",
+            display_name="Nguyen Van A",
+            nearby_place="Ben Thanh",
+            map_url="https://www.google.com/maps?q=10.77,106.69",
+            occurred_at=datetime(2026, 1, 1, 10, 30, tzinfo=UTC),
+            accuracy_meters=20.0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_android_sms_delivery_success() -> None:
+    settings = Settings(
+        environment="test",
+        sms_provider="android",
+        android_sms_gateway_url="http://10.64.235.153:8080",
+        android_sms_gateway_username="sms",
+        android_sms_gateway_password=SecretStr("test-password"),
+    )
+    client = FakeHttpClient(
+        FakeResponse(
+            {
+                "id": "Zs7m6R59Eg0AHc5t8jEvz",
+                "state": "Pending",
+                "recipients": [{"phoneNumber": "0364933038", "state": "Pending"}],
+            },
+            status_code=202,
+        )
+    )
+    delivery = AndroidSmsDelivery(settings, client=client)  # type: ignore[arg-type]
+    message_id = await delivery.send_location_alert(
+        recipient_phone="0364933038",
+        display_name="Nguyen Van A",
+        nearby_place="Ben Thanh",
+        map_url="https://www.google.com/maps?q=10.77,106.69",
+        occurred_at=datetime(2026, 1, 1, 10, 30, tzinfo=UTC),
+        accuracy_meters=20.0,
+    )
+
+    assert message_id == "Zs7m6R59Eg0AHc5t8jEvz"
+    assert len(client.post_calls) == 1
+    call = client.post_calls[0]
+    assert call["url"] == "http://10.64.235.153:8080/message"
+    payload = call["json"]
+    assert isinstance(payload, dict)
+    assert payload["phoneNumbers"] == ["+84364933038"]
+    assert "textMessage" in payload
+
+
+@pytest.mark.asyncio
+async def test_android_sms_delivery_normalizes_cloud_messages_endpoint() -> None:
+    settings = Settings(
+        environment="test",
+        sms_provider="android",
+        android_sms_gateway_url="https://api.sms-gate.app/3rdparty/v1/messages",
+        android_sms_gateway_username="cloud-user",
+        android_sms_gateway_password=SecretStr("cloud-secret"),
+    )
+    client = FakeHttpClient(
+        FakeResponse(
+            {"id": "cloud-msg-123", "state": "Pending"},
+            status_code=202,
+        )
+    )
+    delivery = AndroidSmsDelivery(settings, client=client)  # type: ignore[arg-type]
+    message_id = await delivery.send_location_alert(
+        recipient_phone="0364933038",
+        display_name="Nguyen Van A",
+        nearby_place="Ben Thanh",
+        map_url="https://www.google.com/maps?q=10.77,106.69",
+        occurred_at=datetime(2026, 1, 1, 10, 30, tzinfo=UTC),
+        accuracy_meters=20.0,
+    )
+
+    assert message_id == "cloud-msg-123"
+    assert len(client.post_calls) == 1
+    assert client.post_calls[0]["url"] == "https://api.sms-gate.app/3rdparty/v1/messages"
+    assert client.post_calls[0]["json"]["phoneNumbers"] == ["+84364933038"]
+
+
+@pytest.mark.asyncio
+async def test_android_sms_delivery_raises_error_on_failure() -> None:
+    settings = Settings(
+        environment="test",
+        sms_provider="android",
+        android_sms_gateway_url="http://10.64.235.153:8080",
+        android_sms_gateway_username="sms",
+        android_sms_gateway_password=SecretStr("test-password"),
+    )
+    error_client = FakeHttpClient(FakeResponse({"error": "Unauthorized"}, status_code=401))
+    delivery = AndroidSmsDelivery(settings, client=error_client)  # type: ignore[arg-type]
+
+    with pytest.raises(SmsProviderError):
+        await delivery.send_location_alert(
+            recipient_phone="0364933038",
+            display_name="Nguyen Van A",
+            nearby_place="Ben Thanh",
+            map_url="https://www.google.com/maps?q=10.77,106.69",
+            occurred_at=datetime(2026, 1, 1, 10, 30, tzinfo=UTC),
+            accuracy_meters=20.0,
+        )

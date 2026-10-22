@@ -41,7 +41,7 @@ class LocationAlertResponse(ProfileModel):
 
 
 class ReverseGeocodedLocation(ProfileModel):
-    """Human-readable location and a safe map link for an email."""
+    """Human-readable location and a safe map link for an alert."""
 
     nearby_place: str
     map_url: str

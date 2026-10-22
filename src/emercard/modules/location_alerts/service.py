@@ -15,10 +15,10 @@ from emercard.modules.location_alerts.models import (
     LocationAlertResult,
 )
 from emercard.modules.location_alerts.providers import (
-    EmailDelivery,
-    EmailProviderError,
     LocationProviderError,
     ReverseGeocoder,
+    SmsDelivery,
+    SmsProviderError,
 )
 from emercard.modules.public_links.errors import PublicProfileServiceUnavailableError
 from emercard.modules.public_links.lookup import (
@@ -92,21 +92,21 @@ class LocationAlertLimiter:
 
 
 class LocationAlertService:
-    """Resolve a public card, geocode the scanner location, and notify contacts."""
+    """Resolve a public card, geocode the scanner location, and notify contacts via SMS."""
 
     def __init__(
         self,
         *,
         lookup: PublicProfileLookupService,
         geocoder: ReverseGeocoder,
-        email_delivery: EmailDelivery,
+        sms_delivery: SmsDelivery,
         audit_repository: AuditRepository | None,
         limiter: LocationAlertLimiter,
         now: Callable[[], datetime] = utc_now,
     ) -> None:
         self._lookup = lookup
         self._geocoder = geocoder
-        self._email_delivery = email_delivery
+        self._sms_delivery = sms_delivery
         self._audit_repository = audit_repository
         self._limiter = limiter
         self._now = now
@@ -135,7 +135,7 @@ class LocationAlertService:
             )
             return LocationAlertResult(status="unavailable")
 
-        recipients = [contact.email for contact in profile.emergency_contacts if contact.email]
+        recipients = [contact.phone for contact in profile.emergency_contacts if contact.phone]
         if not recipients:
             await self._audit(
                 resolved,
@@ -165,8 +165,8 @@ class LocationAlertService:
         provider_ids: list[str] = []
         try:
             for recipient in recipients:
-                provider_id = await self._email_delivery.send_location_alert(
-                    recipient=recipient,
+                provider_id = await self._sms_delivery.send_location_alert(
+                    recipient_phone=recipient,
                     display_name=profile.display_name,
                     nearby_place=location.nearby_place,
                     map_url=location.map_url,
@@ -175,7 +175,7 @@ class LocationAlertService:
                 )
                 if provider_id:
                     provider_ids.append(provider_id)
-        except EmailProviderError as error:
+        except SmsProviderError as error:
             await self._audit(
                 resolved,
                 status="provider_error",
