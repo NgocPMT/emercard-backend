@@ -490,7 +490,7 @@ async def test_android_sms_delivery_success() -> None:
     assert call["url"] == "http://10.64.235.153:8080/message"
     payload = call["json"]
     assert isinstance(payload, dict)
-    assert payload["phoneNumbers"] == ["0364933038"]
+    assert payload["phoneNumbers"] == ["+84364933038"]
     assert "textMessage" in payload
 
 
@@ -522,6 +522,7 @@ async def test_android_sms_delivery_normalizes_cloud_messages_endpoint() -> None
     assert message_id == "cloud-msg-123"
     assert len(client.post_calls) == 1
     assert client.post_calls[0]["url"] == "https://api.sms-gate.app/3rdparty/v1/messages"
+    assert client.post_calls[0]["json"]["phoneNumbers"] == ["+84364933038"]
 
 
 @pytest.mark.asyncio

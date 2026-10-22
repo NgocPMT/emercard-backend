@@ -226,9 +226,17 @@ class AndroidSmsDelivery:
             if self._settings.android_sms_gateway_password is not None
             else ""
         )
+        recipient = recipient_phone.strip()
+        if recipient.startswith("0") and len(recipient) == 10:
+            formatted_phone = f"+84{recipient[1:]}"
+        elif recipient.startswith("84") and len(recipient) == 11:
+            formatted_phone = f"+{recipient}"
+        else:
+            formatted_phone = recipient
+
         auth = httpx.BasicAuth(username=username, password=password)
         payload: dict[str, Any] = {
-            "phoneNumbers": [recipient_phone],
+            "phoneNumbers": [formatted_phone],
             "textMessage": {
                 "text": content,
             },
