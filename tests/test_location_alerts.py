@@ -8,6 +8,7 @@ from pydantic import SecretStr, ValidationError
 from emercard.core.config import Settings
 from emercard.main import create_app
 from emercard.modules.location_alerts import (
+    AndroidSmsDelivery,
     LocationAlertExternalError,
     LocationAlertLimiter,
     LocationAlertRequest,
@@ -446,6 +447,68 @@ async def test_speedsms_delivery_rejects_invalid_phone() -> None:
     with pytest.raises(SmsProviderError, match="invalid"):
         await delivery.send_location_alert(
             recipient_phone="0912345678",
+            display_name="Nguyen Van A",
+            nearby_place="Ben Thanh",
+            map_url="https://www.google.com/maps?q=10.77,106.69",
+            occurred_at=datetime(2026, 1, 1, 10, 30, tzinfo=UTC),
+            accuracy_meters=20.0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_android_sms_delivery_success() -> None:
+    settings = Settings(
+        environment="test",
+        sms_provider="android",
+        android_sms_gateway_url="http://10.64.235.153:8080",
+        android_sms_gateway_username="sms",
+        android_sms_gateway_password=SecretStr("test-password"),
+    )
+    client = FakeHttpClient(
+        FakeResponse(
+            {
+                "id": "Zs7m6R59Eg0AHc5t8jEvz",
+                "state": "Pending",
+                "recipients": [{"phoneNumber": "0364933038", "state": "Pending"}],
+            },
+            status_code=202,
+        )
+    )
+    delivery = AndroidSmsDelivery(settings, client=client)  # type: ignore[arg-type]
+    message_id = await delivery.send_location_alert(
+        recipient_phone="0364933038",
+        display_name="Nguyen Van A",
+        nearby_place="Ben Thanh",
+        map_url="https://www.google.com/maps?q=10.77,106.69",
+        occurred_at=datetime(2026, 1, 1, 10, 30, tzinfo=UTC),
+        accuracy_meters=20.0,
+    )
+
+    assert message_id == "Zs7m6R59Eg0AHc5t8jEvz"
+    assert len(client.post_calls) == 1
+    call = client.post_calls[0]
+    assert call["url"] == "http://10.64.235.153:8080/message"
+    payload = call["json"]
+    assert isinstance(payload, dict)
+    assert payload["phoneNumbers"] == ["0364933038"]
+    assert "textMessage" in payload
+
+
+@pytest.mark.asyncio
+async def test_android_sms_delivery_raises_error_on_failure() -> None:
+    settings = Settings(
+        environment="test",
+        sms_provider="android",
+        android_sms_gateway_url="http://10.64.235.153:8080",
+        android_sms_gateway_username="sms",
+        android_sms_gateway_password=SecretStr("test-password"),
+    )
+    error_client = FakeHttpClient(FakeResponse({"error": "Unauthorized"}, status_code=401))
+    delivery = AndroidSmsDelivery(settings, client=error_client)  # type: ignore[arg-type]
+
+    with pytest.raises(SmsProviderError):
+        await delivery.send_location_alert(
+            recipient_phone="0364933038",
             display_name="Nguyen Van A",
             nearby_place="Ben Thanh",
             map_url="https://www.google.com/maps?q=10.77,106.69",

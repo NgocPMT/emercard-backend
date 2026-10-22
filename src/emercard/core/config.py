@@ -12,6 +12,7 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 IndexInitializationMode = Literal["disabled", "startup", "command"]
 AuthAlgorithm = Literal["HS256", "HS384", "HS512"]
 CookieSameSite = Literal["lax", "strict", "none"]
+SmsProviderName = Literal["speedsms", "android"]
 
 
 class Settings(BaseSettings):
@@ -71,6 +72,10 @@ class Settings(BaseSettings):
     link_access_history_retention_seconds: Annotated[int, Field(ge=60, le=31_536_000)] = 7_776_000
     location_provider_timeout_seconds: Annotated[float, Field(gt=0, le=60)] = 5.0
     sms_provider_timeout_seconds: Annotated[float, Field(gt=0, le=60)] = 10.0
+    sms_provider: SmsProviderName = "android"
+    android_sms_gateway_url: str = "http://127.0.0.1:8080"
+    android_sms_gateway_username: str = "sms"
+    android_sms_gateway_password: SecretStr | None = None
     locationiq_api_key: SecretStr | None = None
     speedsms_access_token: SecretStr | None = None
     speedsms_sms_type: Annotated[int, Field(ge=1, le=5)] = 2
@@ -154,6 +159,15 @@ class Settings(BaseSettings):
         parsed = urlparse(normalized)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("speedsms_api_base_url must be an absolute http(s) URL")
+        return normalized
+
+    @field_validator("android_sms_gateway_url")
+    @classmethod
+    def validate_android_sms_gateway_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("android_sms_gateway_url must be an absolute http(s) URL")
         return normalized
 
     @field_validator("public_card_base_url", "public_profile_base_url")
@@ -240,9 +254,18 @@ class Settings(BaseSettings):
             locationiq_key = self.locationiq_api_key
             if locationiq_key is None or not locationiq_key.get_secret_value():
                 raise ValueError("locationiq_api_key is required for deployments")
-            speedsms_token = self.speedsms_access_token
-            if speedsms_token is None or not speedsms_token.get_secret_value():
-                raise ValueError("speedsms_access_token is required for deployments")
+            if self.sms_provider == "speedsms":
+                speedsms_token = self.speedsms_access_token
+                if speedsms_token is None or not speedsms_token.get_secret_value():
+                    raise ValueError(
+                        "speedsms_access_token is required for deployments with speedsms"
+                    )
+            elif self.sms_provider == "android":
+                android_pwd = self.android_sms_gateway_password
+                if android_pwd is None or not android_pwd.get_secret_value():
+                    raise ValueError(
+                        "android_sms_gateway_password is required for deployments with android"
+                    )
         if self.auth_cookie_same_site == "none" and not self.auth_cookie_secure:
             raise ValueError("auth_cookie_secure must be true when auth_cookie_same_site is 'none'")
         return self
