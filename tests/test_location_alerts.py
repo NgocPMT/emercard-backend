@@ -322,6 +322,91 @@ async def test_location_alert_service_raises_external_error_on_sms_failure() -> 
     assert audit.events[0]["status"] == "provider_error"
 
 
+class FailingGeocoder:
+    async def reverse(self, **kwargs: object) -> ReverseGeocodedLocation:
+        raise LocationProviderError("LocationIQ unavailable")
+
+
+@pytest.mark.asyncio
+async def test_location_alert_service_falls_back_when_geocoder_raises_error() -> None:
+    audit = FakeAudit()
+    sms = FakeSmsDelivery()
+    service = LocationAlertService(
+        lookup=FakeLookup(profile()),
+        geocoder=FailingGeocoder(),
+        sms_delivery=sms,
+        audit_repository=audit,
+        limiter=LocationAlertLimiter(
+            token_cooldown_seconds=300,
+            ip_window_seconds=3600,
+            ip_burst=5,
+        ),
+    )
+
+    result = await service.send(token="public-token", request=request(), client_key="127.0.0.1")
+    assert result.status == "sent"
+    assert result.nearby_place == "vị trí được chia sẻ"
+    assert len(sms.calls) == 1
+    assert sms.calls[0]["nearby_place"] == "vị trí được chia sẻ"
+    assert audit.events[0]["status"] == "sent"
+
+
+class PartialFailingSmsDelivery:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def send_location_alert(self, *, recipient_phone: str, **kwargs: object) -> str:
+        self.calls.append(recipient_phone)
+        if recipient_phone == "0123456789":
+            raise SmsProviderError("Invalid recipient phone number")
+        return "provider-msg-ok"
+
+
+@pytest.mark.asyncio
+async def test_location_alert_service_continues_when_partial_recipient_fails() -> None:
+    audit = FakeAudit()
+    sms = PartialFailingSmsDelivery()
+    prof = ProfileDocument.model_validate(
+        {
+            "_id": "507f1f77bcf86cd799439011",
+            "user_id": "507f1f77bcf86cd799439012",
+            "display_name": "Nguyen Van A",
+            "birth_year": 1995,
+            "gender": "prefer_not_to_say",
+            "blood_type": "O+",
+            "critical_allergies": [],
+            "important_conditions": [],
+            "critical_medications": [],
+            "location_alerts_enabled": True,
+            "emergency_contacts": [
+                {"name": "Bad Contact", "relationship": "Friend", "phone": "0123456789"},
+                {"name": "Good Contact", "relationship": "Family", "phone": "0364933038"},
+            ],
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+    )
+    service = LocationAlertService(
+        lookup=FakeLookup(prof),
+        geocoder=FakeGeocoder(),
+        sms_delivery=sms,
+        audit_repository=audit,
+        limiter=LocationAlertLimiter(
+            token_cooldown_seconds=300,
+            ip_window_seconds=3600,
+            ip_burst=5,
+        ),
+    )
+
+    result = await service.send(token="public-token", request=request(), client_key="127.0.0.1")
+    assert result.status == "sent"
+    assert result.provider_id == "provider-msg-ok"
+    assert result.recipient_count == 2
+    assert sms.calls == ["0123456789", "0364933038"]
+    assert audit.events[0]["status"] == "sent"
+    assert audit.events[0]["provider_id"] == "provider-msg-ok"
+
+
 @pytest.mark.asyncio
 async def test_location_alert_cooldown_prevents_duplicate_delivery() -> None:
     service, geocoder, sms, _ = service_for(profile())

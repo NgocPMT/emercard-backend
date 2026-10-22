@@ -16,9 +16,11 @@ from emercard.modules.location_alerts.models import (
 )
 from emercard.modules.location_alerts.providers import (
     LocationProviderError,
+    ReverseGeocodedLocation,
     ReverseGeocoder,
     SmsDelivery,
     SmsProviderError,
+    build_map_url,
 )
 from emercard.modules.public_links.errors import PublicProfileServiceUnavailableError
 from emercard.modules.public_links.lookup import (
@@ -151,20 +153,16 @@ class LocationAlertService:
             location = await self._geocoder.reverse(
                 latitude=request.latitude, longitude=request.longitude
             )
-        except LocationProviderError as error:
-            await self._audit(
-                resolved,
-                status="provider_error",
-                nearby_place=None,
-                provider_id=None,
-                location_bucket=_location_bucket(request.latitude, request.longitude),
-                client_key_hash=client_hash,
+        except LocationProviderError:
+            location = ReverseGeocodedLocation(
+                nearby_place="vị trí được chia sẻ",
+                map_url=build_map_url(request.latitude, request.longitude),
             )
-            raise LocationAlertExternalError from error
 
         provider_ids: list[str] = []
-        try:
-            for recipient in recipients:
+        last_error: Exception | None = None
+        for recipient in recipients:
+            try:
                 provider_id = await self._sms_delivery.send_location_alert(
                     recipient_phone=recipient,
                     display_name=profile.display_name,
@@ -175,16 +173,20 @@ class LocationAlertService:
                 )
                 if provider_id:
                     provider_ids.append(provider_id)
-        except SmsProviderError as error:
+            except SmsProviderError as error:
+                last_error = error
+                continue
+
+        if not provider_ids and last_error is not None:
             await self._audit(
                 resolved,
                 status="provider_error",
                 nearby_place=location.nearby_place,
-                provider_id=provider_ids[0] if provider_ids else None,
+                provider_id=None,
                 location_bucket=_location_bucket(request.latitude, request.longitude),
                 client_key_hash=client_hash,
             )
-            raise LocationAlertExternalError from error
+            raise LocationAlertExternalError from last_error
 
         await self._audit(
             resolved,
