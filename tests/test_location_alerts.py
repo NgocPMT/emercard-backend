@@ -495,6 +495,36 @@ async def test_android_sms_delivery_success() -> None:
 
 
 @pytest.mark.asyncio
+async def test_android_sms_delivery_normalizes_cloud_messages_endpoint() -> None:
+    settings = Settings(
+        environment="test",
+        sms_provider="android",
+        android_sms_gateway_url="https://api.sms-gate.app/3rdparty/v1/messages",
+        android_sms_gateway_username="cloud-user",
+        android_sms_gateway_password=SecretStr("cloud-secret"),
+    )
+    client = FakeHttpClient(
+        FakeResponse(
+            {"id": "cloud-msg-123", "state": "Pending"},
+            status_code=202,
+        )
+    )
+    delivery = AndroidSmsDelivery(settings, client=client)  # type: ignore[arg-type]
+    message_id = await delivery.send_location_alert(
+        recipient_phone="0364933038",
+        display_name="Nguyen Van A",
+        nearby_place="Ben Thanh",
+        map_url="https://www.google.com/maps?q=10.77,106.69",
+        occurred_at=datetime(2026, 1, 1, 10, 30, tzinfo=UTC),
+        accuracy_meters=20.0,
+    )
+
+    assert message_id == "cloud-msg-123"
+    assert len(client.post_calls) == 1
+    assert client.post_calls[0]["url"] == "https://api.sms-gate.app/3rdparty/v1/messages"
+
+
+@pytest.mark.asyncio
 async def test_android_sms_delivery_raises_error_on_failure() -> None:
     settings = Settings(
         environment="test",

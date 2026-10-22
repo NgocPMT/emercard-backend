@@ -215,7 +215,11 @@ class AndroidSmsDelivery:
             map_url=map_url,
             max_length=160,
         )
-        endpoint = f"{self._settings.android_sms_gateway_url.rstrip('/')}/message"
+        raw_url = self._settings.android_sms_gateway_url.rstrip("/")
+        if raw_url.endswith("/message") or raw_url.endswith("/messages"):
+            endpoint = raw_url
+        else:
+            endpoint = f"{raw_url}/message"
         username = self._settings.android_sms_gateway_username
         password = (
             self._settings.android_sms_gateway_password.get_secret_value()
