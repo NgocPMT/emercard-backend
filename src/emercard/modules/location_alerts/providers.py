@@ -46,13 +46,17 @@ class LocationIQReverseGeocoder:
         self._client = client
 
     async def reverse(self, *, latitude: float, longitude: float) -> ReverseGeocodedLocation:
-        map_url = _map_url(latitude, longitude)
+        map_url = build_map_url(latitude, longitude)
+        api_key = (
+            self._settings.locationiq_api_key.get_secret_value()
+            if self._settings.locationiq_api_key is not None
+            else ""
+        )
+        if not api_key:
+            return ReverseGeocodedLocation(nearby_place="vị trí được chia sẻ", map_url=map_url)
+
         params = {
-            "key": (
-                self._settings.locationiq_api_key.get_secret_value()
-                if self._settings.locationiq_api_key is not None
-                else ""
-            ),
+            "key": api_key,
             "lat": f"{latitude:.7f}",
             "lon": f"{longitude:.7f}",
             "format": "json",
@@ -259,7 +263,10 @@ class AndroidSmsDelivery:
         return str(message_id) if message_id is not None else None
 
 
-def _map_url(latitude: float, longitude: float) -> str:
+def build_map_url(latitude: float, longitude: float) -> str:
     return "https://www.google.com/maps?" + urlencode(
         {"q": f"{latitude:.7f},{longitude:.7f}"}
     )
+
+
+_map_url = build_map_url

@@ -268,6 +268,19 @@ async def test_locationiq_reverse_geocoder_falls_back_on_empty_display_name_or_4
 
 
 @pytest.mark.asyncio
+async def test_locationiq_reverse_geocoder_falls_back_when_api_key_missing() -> None:
+    settings = Settings(
+        _env_file=None,
+        environment="test",
+        locationiq_api_key=None,
+    )
+    geocoder = LocationIQReverseGeocoder(settings)
+    result = await geocoder.reverse(latitude=10.8411, longitude=106.8098)
+    assert result.nearby_place == "vị trí được chia sẻ"
+    assert "10.8411000" in result.map_url
+
+
+@pytest.mark.asyncio
 async def test_locationiq_reverse_geocoder_raises_location_provider_error_on_failure() -> None:
     settings = Settings(
         _env_file=None,

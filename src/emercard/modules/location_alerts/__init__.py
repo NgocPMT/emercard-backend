@@ -13,6 +13,7 @@ from emercard.modules.location_alerts.providers import (
     SmsDelivery,
     SmsProviderError,
     SpeedSmsDelivery,
+    build_map_url,
     format_location_alert_sms,
     strip_vietnamese_accents,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "SmsDelivery",
     "SmsProviderError",
     "SpeedSmsDelivery",
+    "build_map_url",
     "format_location_alert_sms",
     "strip_vietnamese_accents",
 ]
