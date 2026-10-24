@@ -15,6 +15,12 @@ class DuplicateEmailError(AuthError):
     message = "Email này đã được đăng ký."
 
 
+class DuplicatePhoneError(AuthError):
+    status_code = 409
+    code = "auth.phone_already_registered"
+    message = "Số điện thoại này đã được đăng ký."
+
+
 class InvalidCredentialsError(AuthError):
     code = "auth.invalid_credentials"
     message = "Email hoặc mật khẩu không đúng."

@@ -7,6 +7,7 @@ from pymongo import ASCENDING, IndexModel
 from emercard.core.config import Settings
 
 USERS_EMAIL_INDEX = "users_email_unique"
+USERS_PHONE_INDEX = "users_phone_unique"
 PROFILES_USER_INDEX = "medical_profiles_user_unique"
 PROFILES_PUBLIC_TOKEN_INDEX = "medical_profiles_public_token_unique"
 PUBLIC_ACCESS_LINKS_PROFILE_INDEX = "public_access_links_profile"
@@ -45,7 +46,13 @@ def collection_indexes(settings: Settings) -> dict[str, list[IndexModel]]:
                 [("email", ASCENDING)],
                 name=USERS_EMAIL_INDEX,
                 unique=True,
-            )
+            ),
+            IndexModel(
+                [("phone", ASCENDING)],
+                name=USERS_PHONE_INDEX,
+                unique=True,
+                partialFilterExpression={"phone": {"$type": "string"}},
+            ),
         ],
         settings.mongodb_profiles_collection: [
             IndexModel(
