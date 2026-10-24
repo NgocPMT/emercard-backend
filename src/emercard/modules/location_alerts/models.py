@@ -74,7 +74,9 @@ class LocationAlertIncidentOutput(ProfileModel):
     accuracy_meters: float | None = None
     nearby_place: str | None = None
     map_url: str | None = None
-    recipients: list[SmsDeliveryReceiptOutput] = Field(default_factory=list)
+    recipients: list[SmsDeliveryReceiptOutput] = Field(
+        default_factory=list[SmsDeliveryReceiptOutput]
+    )
 
 
 class LocationAlertHistoryOutput(ProfileModel):
