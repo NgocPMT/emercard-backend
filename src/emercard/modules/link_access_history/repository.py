@@ -31,17 +31,23 @@ class LinkAccessHistoryRepository:
         card_id: ObjectId | str,
         public_access_link_id: ObjectId | str,
         accessed_at: datetime | None = None,
+        device: str | None = None,
+        latency_ms: int | None = None,
     ) -> LinkAccessEventDocument:
         timestamp = accessed_at or utc_now()
-        document = LinkAccessEventDocument.model_validate(
-            {
-                "_id": ObjectId(),
-                "card_id": _object_id(card_id),
-                "public_access_link_id": _object_id(public_access_link_id),
-                "accessed_at": timestamp,
-                "expires_at": timestamp + self._retention,
-            }
-        )
+        data: dict[str, Any] = {
+            "_id": ObjectId(),
+            "card_id": _object_id(card_id),
+            "public_access_link_id": _object_id(public_access_link_id),
+            "accessed_at": timestamp,
+            "expires_at": timestamp + self._retention,
+        }
+        if device:
+            data["device"] = device
+        if latency_ms is not None:
+            data["latency_ms"] = latency_ms
+
+        document = LinkAccessEventDocument.model_validate(data)
         await self._collection.insert_one(_persisted(document))
         return document
 
@@ -52,7 +58,7 @@ class LinkAccessHistoryRepository:
         public_access_link_id: ObjectId | str,
         limit: int = 50,
         cursor: str | None = None,
-    ) -> tuple[list[LinkAccessEventDocument], str | None]:
+    ) -> tuple[list[LinkAccessEventDocument], str | None, int, int | None]:
         if limit < 1 or limit > 100:
             raise ValueError("access history limit must be between 1 and 100")
         card_identifier = _object_id(card_id)
@@ -80,7 +86,32 @@ class LinkAccessHistoryRepository:
             last = page[-1]
             next_cursor = _encode_cursor(last.accessed_at, last.id)
             events = page
-        return events, next_cursor
+
+        now = utc_now()
+        start_of_month = datetime(now.year, now.month, 1, tzinfo=now.tzinfo)
+        monthly_query: dict[str, Any] = {
+            "card_id": card_identifier,
+            "public_access_link_id": link_identifier,
+            "accessed_at": {"$gte": start_of_month},
+        }
+        scans_this_month = 0
+        if hasattr(self._collection, "count_documents"):
+            scans_this_month = await self._collection.count_documents(monthly_query)
+        else:
+            records_list = getattr(self._collection, "records", [])
+            scans_this_month = sum(
+                1
+                for r in records_list
+                if r.get("card_id") == card_identifier
+                and r.get("public_access_link_id") == link_identifier
+                and r.get("accessed_at") is not None
+                and r.get("accessed_at") >= start_of_month
+            )
+
+        latencies = [e.latency_ms for e in events if e.latency_ms is not None]
+        average_latency_ms = int(sum(latencies) / len(latencies)) if latencies else None
+
+        return events, next_cursor, scans_this_month, average_latency_ms
 
 
 def _encode_cursor(accessed_at: datetime, event_id: ObjectId) -> str:

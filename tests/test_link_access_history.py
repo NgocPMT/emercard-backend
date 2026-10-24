@@ -11,7 +11,10 @@ from emercard.modules.card_link_assignments import (
     CardLinkAssignmentStatus,
 )
 from emercard.modules.cards import hash_public_token
-from emercard.modules.link_access_history import LinkAccessHistoryRepository
+from emercard.modules.link_access_history import (
+    LinkAccessHistoryRepository,
+    parse_device_label,
+)
 from emercard.modules.profiles import ProfileDocument
 from emercard.modules.public_links import (
     PublicAccessLinkDocument,
@@ -87,17 +90,25 @@ class Settings:
 
 
 @pytest.mark.asyncio
-async def test_repository_appends_minimized_events_and_pages() -> None:
+async def test_repository_appends_events_with_device_and_latency() -> None:
     collection = Collection()
     repository = LinkAccessHistoryRepository(Database(collection), Settings())
-    first = await repository.append(card_id=CARD_ID, public_access_link_id=LINK_ID, accessed_at=NOW)
+    first = await repository.append(
+        card_id=CARD_ID,
+        public_access_link_id=LINK_ID,
+        accessed_at=NOW,
+        device="Apple iPhone (Safari)",
+        latency_ms=45,
+    )
     second = await repository.append(
         card_id=CARD_ID,
         public_access_link_id=LINK_ID,
         accessed_at=NOW + timedelta(minutes=1),
+        device="Samsung Galaxy (Chrome)",
+        latency_ms=55,
     )
 
-    events, cursor = await repository.list_by_card_and_link(
+    events, cursor, scans_month, avg_latency = await repository.list_by_card_and_link(
         card_id=CARD_ID,
         public_access_link_id=LINK_ID,
         limit=1,
@@ -105,17 +116,23 @@ async def test_repository_appends_minimized_events_and_pages() -> None:
 
     assert events == [second]
     assert cursor is not None
+    assert scans_month >= 0
+    assert avg_latency == 55
     assert set(collection.records[0]) == {
         "_id",
         "card_id",
         "public_access_link_id",
         "accessed_at",
         "expires_at",
+        "device",
+        "latency_ms",
     }
+    assert collection.records[0]["device"] == "Apple iPhone (Safari)"
+    assert collection.records[0]["latency_ms"] == 45
     assert collection.records[0]["expires_at"] == NOW + timedelta(
         seconds=Settings.link_access_history_retention_seconds
     )
-    remaining, next_cursor = await repository.list_by_card_and_link(
+    remaining, next_cursor, _, _ = await repository.list_by_card_and_link(
         card_id=CARD_ID,
         public_access_link_id=LINK_ID,
         limit=1,
@@ -210,6 +227,63 @@ async def test_successful_card_link_lookup_records_one_server_timestamped_event(
     assert history.calls[0]["card_id"] == CARD_ID
     assert history.calls[0]["public_access_link_id"] == LINK_ID
     assert history.calls[0]["accessed_at"].tzinfo is UTC
+    assert history.calls[0]["device"] == "Thiết bị di động"
+    assert isinstance(history.calls[0]["latency_ms"], int)
+
+
+def test_parse_device_label() -> None:
+    assert parse_device_label(None) == "Thiết bị di động"
+    assert parse_device_label("") == "Thiết bị di động"
+    iphone_ua = (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+        "AppleWebKit/605.1.15 Safari/604.1"
+    )
+    assert parse_device_label(iphone_ua) == "Apple iPhone (Safari)"
+    pixel_ua = (
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) "
+        "AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36"
+    )
+    assert parse_device_label(pixel_ua) == "Google Pixel (Chrome)"
+    samsung_ua = (
+        "Mozilla/5.0 (Linux; Android 14; SM-S928B) "
+        "AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36"
+    )
+    assert parse_device_label(samsung_ua) == "Samsung Galaxy (Chrome)"
+    mac_ua = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/605.1.15 Version/17.0 Safari/605.1.15"
+    )
+    assert parse_device_label(mac_ua) == "Mac (Safari)"
+
+
+@pytest.mark.asyncio
+async def test_lookup_with_user_agent_records_parsed_device() -> None:
+    link = PublicAccessLinkDocument.model_validate(
+        {
+            "_id": LINK_ID,
+            "profile_id": PROFILE_ID,
+            "purpose": PublicLinkPurpose.CARD,
+            "token_hash": hash_public_token(TOKEN),
+            "status": PublicAccessLinkStatus.ACTIVE,
+            "created_at": NOW,
+            "updated_at": NOW,
+            "activated_at": NOW,
+        }
+    )
+    history = HistoryRepository()
+    iphone_ua = (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+        "AppleWebKit/605.1.15 Safari/604.1"
+    )
+    await PublicProfileLookupService(
+        LinkRepository(link),
+        ProfileRepository(),
+        assignment_repository=AssignmentRepository(),
+        access_history_repository=history,
+    ).lookup(TOKEN, user_agent=iphone_ua)
+
+    assert history.calls[0]["device"] == "Apple iPhone (Safari)"
+    assert isinstance(history.calls[0]["latency_ms"], int)
 
 
 @pytest.mark.asyncio

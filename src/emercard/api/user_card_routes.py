@@ -120,7 +120,7 @@ def build_user_card_router() -> APIRouter:
         if link is None or link.purpose is not PublicLinkPurpose.CARD:
             raise CardNotFoundError("card does not exist")
         try:
-            events, next_cursor = await repository.list_by_card_and_link(
+            res = await repository.list_by_card_and_link(
                 card_id=card_id,
                 public_access_link_id=link.id,
                 limit=limit,
@@ -130,9 +130,24 @@ def build_user_card_router() -> APIRouter:
             raise HTTPException(status_code=422, detail="invalid access history cursor") from error
         except (InvalidIdentifierError, RepositoryError, PyMongoError) as error:
             raise CardServiceUnavailableError("card service is unavailable") from error
+
+        if len(res) >= 4:
+            events, next_cursor, scans_this_month, average_latency_ms = (
+                res[0],
+                res[1],
+                res[2],
+                res[3],
+            )
+        else:
+            events, next_cursor = res[0], res[1]
+            scans_this_month = len(events)
+            average_latency_ms = None
+
         return LinkAccessHistoryOutput(
             items=[to_link_access_event_output(event) for event in events],
             next_cursor=next_cursor,
+            scans_this_month=scans_this_month,
+            average_latency_ms=average_latency_ms,
         )
 
     @router.post("/me/cards/{card_id}/lost", response_model=UserCardOutput)

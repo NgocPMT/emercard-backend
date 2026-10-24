@@ -1499,9 +1499,16 @@ def test_user_card_access_history_route_is_owner_scoped_and_minimized() -> None:
     assert unauthenticated.status_code == 401
     assert response.status_code == 200
     assert response.json()["items"] == [
-        {"id": str(event.id), "accessed_at": NOW.isoformat().replace("+00:00", "Z")}
+        {
+            "id": str(event.id),
+            "accessed_at": NOW.isoformat().replace("+00:00", "Z"),
+            "device": "Thiết bị di động",
+            "latency_ms": None,
+        }
     ]
     assert response.json()["next_cursor"] == "opaque-next-page"
+    assert response.json()["scans_this_month"] == 1
+    assert response.json()["average_latency_ms"] is None
     assert "public_access_link_id" not in response.text
     assert "card_id" not in response.text
     history.list_by_card_and_link.assert_awaited_once_with(
