@@ -14,17 +14,24 @@ from emercard.api.auth_routes import require_admin
 from emercard.modules.card_link_assignments import CardLinkAssignmentRepository
 from emercard.modules.cards import (
     AdminCardOutput,
+    BatchCardProvisionInput,
+    BatchCardProvisionOutput,
+    CardInventoryStatsOutput,
     CardListOutput,
     CardProvisioningOutput,
     CardRepository,
     CardService,
+    CardStatusUpdateInput,
     ConfirmEncodingInput,
+    CustodyEventListOutput,
     LinkAttachInput,
     LinkCreateInput,
     LinkDetachInput,
     LinkProvisioningOutput,
     ProvisioningOutput,
     PublicLinkListOutput,
+    QuickLinkCardInput,
+    QuickUnlinkCardInput,
     SafeUserListOutput,
     SafeUserOutput,
     to_admin_card,
@@ -39,6 +46,34 @@ from emercard.modules.users import CurrentUserOutput, UserRepository, canonicali
 
 def build_admin_card_router() -> APIRouter:
     router = APIRouter(prefix="/admin", tags=["admin cards"])
+
+    @router.get("/cards/stats", response_model=CardInventoryStatsOutput)
+    async def get_card_stats(  # pyright: ignore[reportUnusedFunction]
+        _: CurrentUserOutput = Depends(require_admin),  # noqa: B008
+        service: CardService = Depends(get_card_service),  # noqa: B008
+    ) -> CardInventoryStatsOutput:
+        return await service.get_inventory_stats()
+
+    @router.post("/cards/batch", response_model=BatchCardProvisionOutput, status_code=201)
+    async def provision_card_batch(  # pyright: ignore[reportUnusedFunction]
+        payload: BatchCardProvisionInput,
+        current_admin: CurrentUserOutput = Depends(require_admin),  # noqa: B008
+        service: CardService = Depends(get_card_service),  # noqa: B008
+    ) -> BatchCardProvisionOutput:
+        return await service.batch_provision(
+            batch_id=payload.batch_id,
+            chip_type=payload.chip_type,
+            quantity=payload.quantity,
+            admin_id=current_admin.id,
+        )
+
+    @router.get("/cards/audit-log", response_model=CustodyEventListOutput)
+    async def list_card_audit_log(  # pyright: ignore[reportUnusedFunction]
+        limit: int = Query(default=50, ge=1, le=100),
+        _: CurrentUserOutput = Depends(require_admin),  # noqa: B008
+        service: CardService = Depends(get_card_service),  # noqa: B008
+    ) -> CustodyEventListOutput:
+        return await service.list_custody_events(limit=limit)
 
     @router.post("/cards", response_model=AdminCardOutput, status_code=201)
     async def create_blank_card(  # pyright: ignore[reportUnusedFunction]
@@ -62,6 +97,50 @@ def build_admin_card_router() -> APIRouter:
             admin_id=current_admin.id,
         )
         return await _admin_card_output(service, card_id)
+
+    @router.post("/cards/{card_id}/status", response_model=AdminCardOutput)
+    async def update_card_status(  # pyright: ignore[reportUnusedFunction]
+        card_id: str,
+        payload: CardStatusUpdateInput,
+        current_admin: CurrentUserOutput = Depends(require_admin),  # noqa: B008
+        service: CardService = Depends(get_card_service),  # noqa: B008
+    ) -> AdminCardOutput:
+        card, link, assignment = await service.update_card_lifecycle_status(
+            card_id=card_id,
+            target_status=payload.target_status,
+            admin_id=current_admin.id,
+            reason=payload.reason,
+        )
+        return to_admin_card(card, link=link, assignment=assignment)
+
+    @router.post("/cards/{card_id}/quick-link", response_model=AdminCardOutput)
+    async def quick_link_card(  # pyright: ignore[reportUnusedFunction]
+        card_id: str,
+        payload: QuickLinkCardInput,
+        current_admin: CurrentUserOutput = Depends(require_admin),  # noqa: B008
+        service: CardService = Depends(get_card_service),  # noqa: B008
+    ) -> AdminCardOutput:
+        card, link, assignment = await service.quick_link(
+            card_id=card_id,
+            user_id=payload.user_id,
+            admin_id=current_admin.id,
+            reason=payload.reason,
+        )
+        return to_admin_card(card, link=link, assignment=assignment)
+
+    @router.post("/cards/{card_id}/quick-unlink", response_model=AdminCardOutput)
+    async def quick_unlink_card(  # pyright: ignore[reportUnusedFunction]
+        card_id: str,
+        payload: QuickUnlinkCardInput,
+        current_admin: CurrentUserOutput = Depends(require_admin),  # noqa: B008
+        service: CardService = Depends(get_card_service),  # noqa: B008
+    ) -> AdminCardOutput:
+        card, link, assignment = await service.quick_unlink(
+            card_id=card_id,
+            admin_id=current_admin.id,
+            reason=payload.reason,
+        )
+        return to_admin_card(card, link=link, assignment=assignment)
 
     @router.get("/users", response_model=SafeUserListOutput)
     async def list_users(  # pyright: ignore[reportUnusedFunction]
@@ -145,6 +224,8 @@ def build_admin_card_router() -> APIRouter:
             status=filters.status,
             owner_id=filters.owner_id,
             serial=filters.serial,
+            search=filters.search,
+            batch_id=filters.batch_id,
             is_current=filters.is_current,
             encoding_state=filters.encoding_state,
             issued=filters.issued,

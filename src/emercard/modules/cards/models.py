@@ -53,6 +53,9 @@ class CardDocument(CardModel):
     voided_at: UtcDateTime | None = None
     replaces_card_id: ObjectIdValue | None = None
     replacement_card_id: ObjectIdValue | None = None
+    batch_id: str | None = None
+    chip_type: str | None = None
+    hardware_uid: str | None = None
     created_at: UtcDateTime
     updated_at: UtcDateTime
 
