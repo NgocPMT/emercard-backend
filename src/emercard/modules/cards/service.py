@@ -92,6 +92,20 @@ class CardRepositoryProtocol(Protocol):
         session: Any | None = None,
     ) -> CardDocument: ...
 
+    async def create_batch_cards(
+        self,
+        cards_data: list[dict[str, Any]],
+        *,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> list[CardDocument]: ...
+
+    async def get_inventory_stats(
+        self,
+        *,
+        session: Any | None = None,
+    ) -> dict[str, int]: ...
+
     async def mark_link_bound(
         self,
         *,
@@ -401,6 +415,13 @@ class CustodyEventRepositoryProtocol(Protocol):
         now: datetime,
         session: Any | None = None,
     ) -> ObjectId: ...
+
+    async def list_recent(
+        self,
+        *,
+        limit: int = 50,
+        session: Any | None = None,
+    ) -> list[dict[str, Any]]: ...
 
 
 class IdempotencyRepositoryProtocol(Protocol):

@@ -38,6 +38,9 @@ class CardRepository:
         serial: str,
         token_hash: str | None,
         replaces_card_id: ObjectId | str | None = None,
+        batch_id: str | None = None,
+        chip_type: str | None = None,
+        hardware_uid: str | None = None,
         now: datetime | None = None,
         session: Any | None = None,
     ) -> CardDocument:
@@ -54,6 +57,9 @@ class CardRepository:
                 "provisioned_at": timestamp if canonical_hash is not None else None,
                 "status": CardStatus.UNASSIGNED,
                 "is_current": False,
+                "batch_id": batch_id,
+                "chip_type": chip_type,
+                "hardware_uid": hardware_uid,
                 "replaces_card_id": replacement_id,
                 "created_at": timestamp,
                 "updated_at": timestamp,
@@ -70,6 +76,9 @@ class CardRepository:
         self,
         *,
         serial: str,
+        batch_id: str | None = None,
+        chip_type: str | None = None,
+        hardware_uid: str | None = None,
         now: datetime | None = None,
         session: Any | None = None,
     ) -> CardDocument:
@@ -78,9 +87,65 @@ class CardRepository:
         return await self.create_unassigned_card(
             serial=serial,
             token_hash=None,
+            batch_id=batch_id,
+            chip_type=chip_type,
+            hardware_uid=hardware_uid,
             now=now,
             session=session,
         )
+
+    async def create_batch_cards(
+        self,
+        cards_data: list[dict[str, Any]],
+        *,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> list[CardDocument]:
+        timestamp = now or utc_now()
+        documents: list[CardDocument] = []
+        persisted_docs: list[dict[str, Any]] = []
+        for data in cards_data:
+            serial = normalize_serial(data["serial"])
+            doc = CardDocument.model_validate(
+                {
+                    "_id": ObjectId(),
+                    "serial": serial,
+                    "owner_id": None,
+                    "token_hash": None,
+                    "provisioned_at": None,
+                    "status": CardStatus.UNASSIGNED,
+                    "is_current": False,
+                    "batch_id": data.get("batch_id"),
+                    "chip_type": data.get("chip_type"),
+                    "hardware_uid": data.get("hardware_uid"),
+                    "replaces_card_id": None,
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                }
+            )
+            documents.append(doc)
+            persisted_docs.append(_persisted(doc))
+        if persisted_docs:
+            try:
+                await self._collection.insert_many(persisted_docs, **_session_kwargs(session))
+            except DuplicateKeyError as error:
+                raise _identity_conflict(error) from error
+        return documents
+
+    async def get_inventory_stats(
+        self,
+        *,
+        session: Any | None = None,
+    ) -> dict[str, int]:
+        pipeline: list[dict[str, Any]] = [
+            {"$group": {"_id": "$status", "count": {"$sum": 1}}}
+        ]
+        cursor = self._collection.aggregate(pipeline, **_session_kwargs(session))
+        counts: dict[str, int] = {}
+        async for doc in cursor:
+            status_val = str(doc.get("_id", ""))
+            counts[status_val] = int(doc.get("count", 0))
+        return counts
 
     async def mark_link_bound(
         self,
@@ -301,6 +366,8 @@ class CardRepository:
         status: CardStatus | None = None,
         owner_id: ObjectId | str | None = None,
         serial: str | None = None,
+        search: str | None = None,
+        batch_id: str | None = None,
         is_current: bool | None = None,
         encoding_state: str | None = None,
         issued: bool | None = None,
@@ -317,6 +384,8 @@ class CardRepository:
             query["owner_id"] = _object_id(owner_id)
         if serial is not None:
             query["serial"] = normalize_serial(serial)
+        if batch_id is not None:
+            query["batch_id"] = batch_id
         if is_current is not None:
             query["is_current"] = is_current
         if issued is not None:
@@ -328,12 +397,31 @@ class CardRepository:
             query["encoding_verified_at"] = None
         elif encoding_state == "verified":
             query["encoding_verified_at"] = {"$type": "date"}
+
+        and_clauses: list[dict[str, Any]] = []
+        if search:
+            search_clean = search.strip()
+            and_clauses.append(
+                {
+                    "$or": [
+                        {"serial": {"$regex": search_clean, "$options": "i"}},
+                        {"batch_id": {"$regex": search_clean, "$options": "i"}},
+                        {"hardware_uid": {"$regex": search_clean, "$options": "i"}},
+                    ]
+                }
+            )
         if after is not None:
             created_at, card_id = after
-            query["$or"] = [
-                {"created_at": {"$gt": created_at}},
-                {"created_at": created_at, "_id": {"$gt": card_id}},
-            ]
+            and_clauses.append(
+                {
+                    "$or": [
+                        {"created_at": {"$gt": created_at}},
+                        {"created_at": created_at, "_id": {"$gt": card_id}},
+                    ]
+                }
+            )
+        if and_clauses:
+            query["$and"] = and_clauses
         cursor = self._collection.find(query, **_session_kwargs(session)).sort(
             [("created_at", ASCENDING), ("_id", ASCENDING)]
         )

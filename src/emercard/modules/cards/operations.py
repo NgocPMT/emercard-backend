@@ -80,6 +80,22 @@ class CustodyEventRepository:
         )
         return event_id
 
+    async def list_recent(
+        self,
+        *,
+        limit: int = 50,
+        session: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        cursor = (
+            self._collection.find({}, **_session_kwargs(session))
+            .sort("created_at", -1)
+            .limit(limit)
+        )
+        events: list[dict[str, Any]] = []
+        async for doc in cursor:
+            events.append(doc)
+        return events
+
 
 def _session_kwargs(session: Any | None) -> dict[str, Any]:
     return {"session": session} if session is not None else {}
