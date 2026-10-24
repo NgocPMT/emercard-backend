@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+import inspect
 from datetime import datetime
 from typing import Any, cast
 
@@ -140,11 +141,18 @@ class CardRepository:
         pipeline: list[dict[str, Any]] = [
             {"$group": {"_id": "$status", "count": {"$sum": 1}}}
         ]
-        cursor = self._collection.aggregate(pipeline, **_session_kwargs(session))
+        res = self._collection.aggregate(pipeline, **_session_kwargs(session))
+        cursor = await res if inspect.isawaitable(res) else res
         counts: dict[str, int] = {}
-        async for doc in cursor:
-            status_val = str(doc.get("_id", ""))
-            counts[status_val] = int(doc.get("count", 0))
+        if hasattr(cursor, "to_list"):
+            docs = await cursor.to_list(length=None)
+            for doc in docs:
+                status_val = str(doc.get("_id", ""))
+                counts[status_val] = int(doc.get("count", 0))
+        else:
+            async for doc in cursor:
+                status_val = str(doc.get("_id", ""))
+                counts[status_val] = int(doc.get("count", 0))
         return counts
 
     async def mark_link_bound(
