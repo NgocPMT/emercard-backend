@@ -14,12 +14,17 @@ from emercard.core.config import Settings
 from emercard.main import create_app
 from emercard.modules.auth.security import hash_password
 from emercard.modules.cards import (
+    BatchCardProvisionOutput,
     CardDocument,
     CardEncodingMismatchError,
+    CardInventoryStatsOutput,
     CardService,
     CardStatus,
+    CustodyEventListOutput,
+    CustodyEventOutput,
     generate_serial,
     hash_public_token,
+    to_admin_card,
 )
 from emercard.modules.users.models import UserDocument
 from tests.conftest import FakeDatabase
@@ -297,3 +302,137 @@ def test_admin_user_lookup_returns_only_safe_account_fields() -> None:
     assert response.json()["email"] == "person@example.com"
     assert "password" not in response.text.lower()
     assert "medical" not in response.text.lower()
+
+
+def test_admin_cards_stats_returns_aggregated_counts() -> None:
+    repository = admin_repository()
+    service = AsyncMock(spec=CardService)
+    service.get_inventory_stats = AsyncMock(
+        return_value=CardInventoryStatsOutput(
+            total=10,
+            active=5,
+            available=3,
+            suspended=1,
+            lost=1,
+            void=0,
+        )
+    )
+    app = create_app(
+        settings=settings(),
+        database=FakeDatabase(ready=True),
+        auth_repository=repository,
+        profile_repository=InMemoryProfileRepository(),
+    )
+    app.dependency_overrides[get_card_service] = lambda: service
+
+    with TestClient(app) as client:
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "admin@example.com", "password": "password-123"},
+        )
+        response = client.get("/api/v1/admin/cards/stats")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "total": 10,
+        "active": 5,
+        "available": 3,
+        "suspended": 1,
+        "lost": 1,
+        "void": 0,
+    }
+
+
+def test_admin_cards_batch_provision_and_audit_log() -> None:
+    repository = admin_repository()
+    card = blank_card()
+    service = AsyncMock(spec=CardService)
+    service.batch_provision = AsyncMock(
+        return_value=BatchCardProvisionOutput(
+            batch_id="BATCH-2026-Q4-VN",
+            chip_type="ntag215",
+            quantity=1,
+            serial_start=card.serial,
+            serial_end=card.serial,
+            cards=[to_admin_card(card)],
+        )
+    )
+    service.list_custody_events = AsyncMock(
+        return_value=CustodyEventListOutput(
+            items=[
+                CustodyEventOutput(
+                    id="65f1a2b3c4d5e6f7a8b9c0d1",
+                    card_id=str(card.id),
+                    card_serial=card.serial,
+                    event_type="batch_provisioned",
+                    previous_owner_id=None,
+                    new_owner_id=None,
+                    performed_by_admin_id=str(ADMIN_ID),
+                    reason="Batch BATCH-2026-Q4-VN (1 ntag215 tags)",
+                    created_at=NOW,
+                )
+            ]
+        )
+    )
+    app = create_app(
+        settings=settings(),
+        database=FakeDatabase(ready=True),
+        auth_repository=repository,
+        profile_repository=InMemoryProfileRepository(),
+    )
+    app.dependency_overrides[get_card_service] = lambda: service
+
+    with TestClient(app) as client:
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "admin@example.com", "password": "password-123"},
+        )
+        batch_res = client.post(
+            "/api/v1/admin/cards/batch",
+            json={"batch_id": "BATCH-2026-Q4-VN", "chip_type": "ntag215", "quantity": 1},
+        )
+        audit_res = client.get("/api/v1/admin/cards/audit-log")
+
+    assert batch_res.status_code == 201
+    assert batch_res.json()["batch_id"] == "BATCH-2026-Q4-VN"
+    assert audit_res.status_code == 200
+    assert len(audit_res.json()["items"]) == 1
+    assert audit_res.json()["items"][0]["event_type"] == "batch_provisioned"
+
+
+def test_admin_cards_status_and_quick_link_routes() -> None:
+    repository = admin_repository()
+    card = managed_card("quick-token")
+    service = AsyncMock(spec=CardService)
+    service.update_card_lifecycle_status = AsyncMock(return_value=(card, None, None))
+    service.quick_link = AsyncMock(return_value=(card, None, None))
+    service.quick_unlink = AsyncMock(return_value=(card, None, None))
+    app = create_app(
+        settings=settings(),
+        database=FakeDatabase(ready=True),
+        auth_repository=repository,
+        profile_repository=InMemoryProfileRepository(),
+    )
+    app.dependency_overrides[get_card_service] = lambda: service
+
+    with TestClient(app) as client:
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "admin@example.com", "password": "password-123"},
+        )
+        status_res = client.post(
+            f"/api/v1/admin/cards/{card.id}/status",
+            json={"target_status": "lost", "reason": "Báo mất qua tổng đài"},
+        )
+        link_res = client.post(
+            f"/api/v1/admin/cards/{card.id}/quick-link",
+            json={"user_id": str(ADMIN_ID), "reason": "Cấp trực tiếp"},
+        )
+        unlink_res = client.post(
+            f"/api/v1/admin/cards/{card.id}/quick-unlink",
+            json={"reason": "Hủy gán"},
+        )
+
+    assert status_res.status_code == 200
+    assert link_res.status_code == 200
+    assert unlink_res.status_code == 200
