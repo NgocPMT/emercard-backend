@@ -32,6 +32,14 @@ class InMemoryUserRepository:
     async def find_by_email(self, email: str) -> UserDocument | None:
         return next((user for user in self.users.values() if user.email == email), None)
 
+    async def find_by_phone(self, phone: str) -> UserDocument | None:
+        return next((user for user in self.users.values() if user.phone == phone), None)
+
+    async def find_by_identifier(self, identifier: str) -> UserDocument | None:
+        if "@" in identifier:
+            return await self.find_by_email(identifier)
+        return await self.find_by_phone(identifier)
+
     async def find_by_id(self, user_id: str) -> UserDocument | None:
         return self.users.get(user_id)
 
@@ -50,16 +58,20 @@ class InMemoryUserRepository:
         email: str,
         password_hash: str,
         role: str = "user",
+        phone: str | None = None,
         now: datetime | None = None,
     ) -> UserDocument:
         if self.force_conflict or any(user.email == email for user in self.users.values()):
             raise RepositoryConflictError("duplicate")
+        if phone and any(user.phone == phone for user in self.users.values()):
+            raise RepositoryConflictError("duplicate phone")
         timestamp = now or datetime.now(UTC)
         user = UserDocument(
             _id=ObjectId(),
             email=email,
             password_hash=password_hash,
             role=role,  # type: ignore[arg-type]
+            phone=phone,
             created_at=timestamp,
             updated_at=timestamp,
         )
@@ -208,14 +220,78 @@ def test_register_returns_user_without_authenticating() -> None:
         )
 
     assert response.status_code == 201
-    assert set(response.json()) == {"id", "email", "role", "created_at", "updated_at"}
+    assert set(response.json()) == {"id", "email", "role", "phone", "created_at", "updated_at"}
     assert response.json()["email"] == "person@example.com"
     assert response.json()["role"] == "user"
+    assert response.json()["phone"] is None
     assert "set-cookie" not in response.headers
     stored = next(iter(user_repository.users.values()))
     assert stored.password_hash != "password-123"
     assert stored.role == "user"
     assert len(profile_repository.profiles) == 1
+
+
+def test_register_with_phone_and_login_with_phone() -> None:
+    user_repository = InMemoryUserRepository()
+    profile_repository = InMemoryProfileRepository()
+    with make_client(user_repository, profile_repository) as client:
+        response = client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "phoneuser@example.com",
+                "phone": " 090 123 4567 ",
+                "password": "password-123",
+            },
+        )
+        assert response.status_code == 201
+        assert response.json()["phone"] == "0901234567"
+
+        # Login using raw domestic phone number
+        login_res = client.post(
+            "/api/v1/auth/login",
+            json={"email": "0901234567", "password": "password-123"},
+        )
+        assert login_res.status_code == 200
+        assert login_res.json()["phone"] == "0901234567"
+
+        # Login using international +84 format
+        login_intl = client.post(
+            "/api/v1/auth/login",
+            json={"email": "+84901234567", "password": "password-123"},
+        )
+        assert login_intl.status_code == 200
+        assert login_intl.json()["phone"] == "0901234567"
+
+        # Verify current user endpoint returns phone
+        current = client.get("/api/v1/me")
+        assert current.status_code == 200
+        assert current.json()["phone"] == "0901234567"
+
+
+def test_register_duplicate_phone_returns_409() -> None:
+    user_repository = InMemoryUserRepository()
+    profile_repository = InMemoryProfileRepository()
+    with make_client(user_repository, profile_repository) as client:
+        first = client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "first@example.com",
+                "phone": "0901234567",
+                "password": "password-123",
+            },
+        )
+        assert first.status_code == 201
+
+        duplicate = client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "second@example.com",
+                "phone": "+84901234567",
+                "password": "password-123",
+            },
+        )
+        assert duplicate.status_code == 409
+        assert duplicate.json()["error"]["code"] == "auth.phone_already_registered"
 
 
 def test_registration_does_not_return_success_when_profile_provisioning_fails() -> None:

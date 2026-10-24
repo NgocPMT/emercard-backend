@@ -10,6 +10,7 @@ from emercard.core.types import ObjectIdValue, UtcDateTime
 UserRole = Literal["user", "admin"]
 
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_PHONE_PATTERN = re.compile(r"^\+?[0-9]{8,15}$")
 
 
 class UserModel(BaseModel):
@@ -27,6 +28,30 @@ def canonicalize_email(value: str) -> str:
     return normalized
 
 
+def canonicalize_phone(value: str) -> str:
+    """Normalize phone numbers by stripping formatting characters and validating digits."""
+
+    cleaned = re.sub(r"[\s\-\.\(\)]", "", value.strip())
+    if not _PHONE_PATTERN.fullmatch(cleaned):
+        raise ValueError("Số điện thoại không hợp lệ")
+
+    if cleaned.startswith("+84") and len(cleaned) == 12:
+        cleaned = f"0{cleaned[3:]}"
+    elif cleaned.startswith("84") and len(cleaned) == 11 and not value.strip().startswith("+"):
+        cleaned = f"0{cleaned[2:]}"
+
+    return cleaned
+
+
+def canonicalize_login_identifier(value: str) -> str:
+    """Normalize login identifier as either canonical email or canonical phone."""
+
+    val = value.strip()
+    if "@" in val:
+        return canonicalize_email(val)
+    return canonicalize_phone(val)
+
+
 PasswordInput = Annotated[str, Field(min_length=8, max_length=128)]
 
 
@@ -37,6 +62,7 @@ class UserDocument(UserModel):
     email: str = Field(min_length=3, max_length=254)
     password_hash: str = Field(min_length=1, max_length=512)
     role: UserRole = "user"
+    phone: str | None = None
     created_at: UtcDateTime
     updated_at: UtcDateTime
     # Optional verification metadata keeps reads compatible with accounts created
@@ -51,17 +77,34 @@ class UserDocument(UserModel):
     def normalize_email(cls, value: str) -> str:
         return canonicalize_email(value)
 
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return canonicalize_phone(stripped) if stripped else None
+
 
 class UserRegistrationInput(UserModel):
     """Registration input kept separate from the persistence document."""
 
     email: str = Field(min_length=3, max_length=254)
+    phone: str | None = Field(default=None, max_length=32)
     password: PasswordInput
 
     @field_validator("email")
     @classmethod
     def normalize_email(cls, value: str) -> str:
         return canonicalize_email(value)
+
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return canonicalize_phone(stripped) if stripped else None
 
 
 class UserLoginInput(UserModel):
@@ -71,7 +114,7 @@ class UserLoginInput(UserModel):
     @field_validator("email")
     @classmethod
     def normalize_email(cls, value: str) -> str:
-        return canonicalize_email(value)
+        return canonicalize_login_identifier(value)
 
 
 class PrivateProfileAuthorizationInput(UserModel):
@@ -94,5 +137,6 @@ class CurrentUserOutput(UserModel):
     id: str
     email: str
     role: UserRole
+    phone: str | None = None
     created_at: UtcDateTime
     updated_at: UtcDateTime

@@ -12,7 +12,12 @@ from pymongo.errors import DuplicateKeyError
 from emercard.core.config import Settings
 from emercard.core.types import utc_now
 from emercard.db.repositories import InvalidIdentifierError, RepositoryConflictError
-from emercard.modules.users.models import UserDocument, UserRole, canonicalize_email
+from emercard.modules.users.models import (
+    UserDocument,
+    UserRole,
+    canonicalize_email,
+    canonicalize_phone,
+)
 
 
 class UserRepository:
@@ -24,6 +29,16 @@ class UserRepository:
     async def find_by_email(self, email: str) -> UserDocument | None:
         document = await self._collection.find_one({"email": canonicalize_email(email)})
         return UserDocument.model_validate(document) if document is not None else None
+
+    async def find_by_phone(self, phone: str) -> UserDocument | None:
+        document = await self._collection.find_one({"phone": canonicalize_phone(phone)})
+        return UserDocument.model_validate(document) if document is not None else None
+
+    async def find_by_identifier(self, identifier: str) -> UserDocument | None:
+        """Find a user by either email or phone number."""
+        if "@" in identifier:
+            return await self.find_by_email(identifier)
+        return await self.find_by_phone(identifier)
 
     async def find_by_id(self, user_id: ObjectId | str) -> UserDocument | None:
         identifier = _object_id(user_id)
@@ -65,11 +80,16 @@ class UserRepository:
         email: str,
         password_hash: str,
         role: UserRole = "user",
+        phone: str | None = None,
         now: datetime | None = None,
     ) -> UserDocument:
         canonical_email = canonicalize_email(email)
         if await self.find_by_email(canonical_email) is not None:
             raise RepositoryConflictError("user email already exists")
+
+        canonical_phone = canonicalize_phone(phone) if phone else None
+        if canonical_phone and await self.find_by_phone(canonical_phone) is not None:
+            raise RepositoryConflictError("user phone number already exists")
 
         timestamp = now or utc_now()
         document = UserDocument(
@@ -77,6 +97,7 @@ class UserRepository:
             email=canonical_email,
             password_hash=password_hash,
             role=role,
+            phone=canonical_phone,
             created_at=timestamp,
             updated_at=timestamp,
         )
@@ -86,7 +107,7 @@ class UserRepository:
         try:
             await self._collection.insert_one(persisted)
         except DuplicateKeyError as error:
-            raise RepositoryConflictError("user email already exists") from error
+            raise RepositoryConflictError("user email or phone already exists") from error
         return document
 
 

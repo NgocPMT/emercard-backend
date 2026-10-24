@@ -54,6 +54,14 @@ class UserRepository:
     async def find_by_email(self, email: str) -> UserDocument | None:
         return self.user if self.user.email == email else None
 
+    async def find_by_phone(self, phone: str) -> UserDocument | None:
+        return self.user if self.user.phone == phone else None
+
+    async def find_by_identifier(self, identifier: str) -> UserDocument | None:
+        if "@" in identifier:
+            return await self.find_by_email(identifier)
+        return await self.find_by_phone(identifier)
+
     async def find_by_id(self, user_id: str) -> UserDocument | None:
         return self.user if str(self.user.id) == user_id else None
 

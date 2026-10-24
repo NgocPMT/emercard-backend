@@ -13,6 +13,7 @@ from emercard.db.repositories import (
 from emercard.modules.auth.exceptions import (
     AuthenticationRequiredError,
     DuplicateEmailError,
+    DuplicatePhoneError,
     InvalidCredentialsError,
     InvalidSessionError,
     PrivateProfileAuthorizationError,
@@ -44,6 +45,10 @@ class ProfileRepositoryProtocol(Protocol):
 class UserRepositoryProtocol(Protocol):
     async def find_by_email(self, email: str) -> UserDocument | None: ...
 
+    async def find_by_phone(self, phone: str) -> UserDocument | None: ...
+
+    async def find_by_identifier(self, identifier: str) -> UserDocument | None: ...
+
     async def find_by_id(self, user_id: str) -> UserDocument | None: ...
 
     async def create(
@@ -52,6 +57,7 @@ class UserRepositoryProtocol(Protocol):
         email: str,
         password_hash: str,
         role: UserRole = "user",
+        phone: str | None = None,
         now: datetime | None = None,
     ) -> UserDocument: ...
 
@@ -81,8 +87,11 @@ class AuthService:
                 email=request.email,
                 password_hash=hash_password(request.password),
                 role="user",
+                phone=request.phone,
             )
         except RepositoryConflictError as error:
+            if "phone" in str(error):
+                raise DuplicatePhoneError from error
             raise DuplicateEmailError from error
         try:
             await self._profile_repository.ensure_for_user(user_id=str(user.id))
@@ -91,7 +100,7 @@ class AuthService:
         return _current_user_output(user)
 
     async def login(self, request: UserLoginInput) -> LoginResult:
-        user = await self._repository.find_by_email(request.email)
+        user = await self._repository.find_by_identifier(request.email)
         password_hash = user.password_hash if user is not None else DUMMY_PASSWORD_HASH
         password_valid = verify_password(request.password, password_hash)
         if user is None or not password_valid:
@@ -158,6 +167,7 @@ def _current_user_output(user: UserDocument) -> CurrentUserOutput:
         id=str(user.id),
         email=user.email,
         role=user.role,
+        phone=user.phone,
         created_at=user.created_at,
         updated_at=user.updated_at,
     )

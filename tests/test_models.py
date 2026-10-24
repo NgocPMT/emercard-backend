@@ -22,6 +22,8 @@ from emercard.modules.users import (
     UserLoginInput,
     UserRegistrationInput,
     canonicalize_email,
+    canonicalize_login_identifier,
+    canonicalize_phone,
 )
 
 
@@ -31,6 +33,34 @@ def test_email_is_canonicalized_without_provider_specific_transformations() -> N
         UserLoginInput(email=" Person@Example.COM ", password="password").email
         == "person@example.com"
     )
+
+
+def test_phone_is_canonicalized_and_normalizes_vietnamese_prefixes() -> None:
+    assert canonicalize_phone(" 090 123 4567 ") == "0901234567"
+    assert canonicalize_phone("+84901234567") == "0901234567"
+    assert canonicalize_phone("84901234567") == "0901234567"
+    assert canonicalize_phone("(090) 123-4567") == "0901234567"
+    assert canonicalize_phone("+14155552671") == "+14155552671"
+
+    with pytest.raises(ValueError):
+        canonicalize_phone("123")
+    with pytest.raises(ValueError):
+        canonicalize_phone("not-a-phone")
+
+
+def test_login_input_accepts_email_or_phone_identifier() -> None:
+    assert canonicalize_login_identifier("person@example.com") == "person@example.com"
+    assert canonicalize_login_identifier(" 090 123 4567 ") == "0901234567"
+    assert canonicalize_login_identifier("+84901234567") == "0901234567"
+
+    login_email = UserLoginInput(email="person@example.com", password="password-123")
+    assert login_email.email == "person@example.com"
+
+    login_phone = UserLoginInput(email=" 090 123 4567 ", password="password-123")
+    assert login_phone.email == "0901234567"
+
+    login_intl_phone = UserLoginInput(email="+84901234567", password="password-123")
+    assert login_intl_phone.email == "0901234567"
 
 
 def test_user_document_defaults_legacy_role_and_serializes_object_id() -> None:
