@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any, Protocol, cast
@@ -19,6 +20,13 @@ from emercard.db.repositories import (
 from emercard.modules.card_link_assignments.models import (
     CardLinkAssignmentDocument,
     CardLinkAssignmentStatus,
+)
+from emercard.modules.cards.schemas import (
+    BatchCardProvisionOutput,
+    CardInventoryStatsOutput,
+    CustodyEventListOutput,
+    CustodyEventOutput,
+    to_admin_card,
 )
 from emercard.modules.cards.errors import (
     CardAlreadyAssignedError,
@@ -2126,6 +2134,199 @@ class CardService:
             except Exception as error:
                 raise CardReplacementError("card replacement failed") from error
         raise CardReplacementError("replacement card identity could not be made unique")
+
+    async def get_inventory_stats(self) -> CardInventoryStatsOutput:
+        counts = await self._repository.get_inventory_stats()
+        total = sum(counts.values())
+        return CardInventoryStatsOutput(
+            total=total,
+            active=counts.get("active", 0),
+            available=counts.get("unassigned", 0),
+            suspended=counts.get("disabled", 0),
+            lost=counts.get("lost", 0),
+            void=counts.get("void", 0),
+        )
+
+    async def batch_provision(
+        self,
+        *,
+        batch_id: str,
+        chip_type: str = "ntag215",
+        quantity: int,
+        admin_id: str,
+        now: datetime | None = None,
+    ) -> BatchCardProvisionOutput:
+        timestamp = now or utc_now()
+        cards_data: list[dict[str, Any]] = []
+        for _ in range(quantity):
+            serial = self._serial_generator()
+            raw_uid = secrets.token_hex(7).upper()
+            hardware_uid = ":".join(raw_uid[i : i + 2] for i in range(0, 14, 2))
+            cards_data.append(
+                {
+                    "serial": serial,
+                    "batch_id": batch_id,
+                    "chip_type": chip_type,
+                    "hardware_uid": hardware_uid,
+                }
+            )
+
+        cards = await self._repository.create_batch_cards(cards_data, now=timestamp)
+        if self._custody_event_repository is not None and cards:
+            await self._custody_event_repository.append(
+                card_id=cards[0].id,
+                event_type="batch_provisioned",
+                previous_owner_id=None,
+                new_owner_id=None,
+                performed_by_admin_id=_as_object_id(admin_id),
+                reason=f"Batch {batch_id} ({quantity} {chip_type} tags)",
+                now=timestamp,
+            )
+
+        admin_cards = [to_admin_card(c) for c in cards]
+        return BatchCardProvisionOutput(
+            batch_id=batch_id,
+            chip_type=chip_type,
+            quantity=quantity,
+            serial_start=cards[0].serial,
+            serial_end=cards[-1].serial,
+            cards=admin_cards,
+        )
+
+    async def update_card_lifecycle_status(
+        self,
+        *,
+        card_id: str,
+        target_status: str,
+        admin_id: str,
+        reason: str | None = None,
+        now: datetime | None = None,
+    ) -> tuple[CardDocument, PublicAccessLinkDocument | None, CardLinkAssignmentDocument | None]:
+        timestamp = now or utc_now()
+        target = target_status.lower()
+        if target == "active":
+            await self.activate_card_link(card_id=card_id, admin_id=admin_id)
+        elif target == "suspended":
+            await self.disable_card_link(card_id=card_id, admin_id=admin_id)
+        elif target == "lost":
+            await self.mark_lost(card_id=card_id, now=timestamp)
+        elif target == "void":
+            await self.void(card_id=card_id, admin_id=admin_id)
+        else:
+            raise CardInvalidTransitionError(f"unsupported target status: {target_status}")
+
+        if self._custody_event_repository is not None:
+            await self._custody_event_repository.append(
+                card_id=_as_object_id(card_id),
+                event_type=f"status_updated_{target}",
+                previous_owner_id=None,
+                new_owner_id=None,
+                performed_by_admin_id=_as_object_id(admin_id),
+                reason=reason,
+                now=timestamp,
+            )
+
+        return await self.describe_admin_card(card_id=card_id)
+
+    async def quick_link(
+        self,
+        *,
+        card_id: str,
+        user_id: str,
+        admin_id: str,
+        reason: str | None = None,
+    ) -> tuple[CardDocument, PublicAccessLinkDocument | None, CardLinkAssignmentDocument | None]:
+        user = await self._user_repository.find_by_id(_as_object_id(user_id))
+        if user is None:
+            raise CardUserNotFoundError("user does not exist")
+
+        links = await self.list_user_links(user_id=user_id)
+        target_link = next(
+            (link for link in links if link.status == PublicAccessLinkStatus.PENDING),
+            None,
+        )
+        if target_link is None:
+            created_link, _ = await self.create_user_link(
+                user_id=user_id,
+                purpose=PublicLinkPurpose.STANDALONE,
+                label="Thẻ EmerCard",
+            )
+            target_link = created_link
+
+        await self.attach_card_link(
+            card_id=card_id,
+            public_access_link_id=str(target_link.id),
+            admin_id=admin_id,
+        )
+        await self._repository.confirm_encoding_without_token_hash(
+            card_id=card_id,
+            admin_id=admin_id,
+        )
+        await self.issue(card_id=card_id, admin_id=admin_id)
+        await self.activate_card_link(card_id=card_id, admin_id=admin_id)
+
+        if self._custody_event_repository is not None:
+            await self._custody_event_repository.append(
+                card_id=_as_object_id(card_id),
+                event_type="card_linked",
+                previous_owner_id=None,
+                new_owner_id=_as_object_id(user_id),
+                performed_by_admin_id=_as_object_id(admin_id),
+                reason=reason,
+                now=utc_now(),
+            )
+
+        return await self.describe_admin_card(card_id=card_id)
+
+    async def quick_unlink(
+        self,
+        *,
+        card_id: str,
+        admin_id: str,
+        reason: str | None = None,
+    ) -> tuple[CardDocument, PublicAccessLinkDocument | None, CardLinkAssignmentDocument | None]:
+        await self.revoke_card_link(
+            card_id=card_id,
+            admin_id=admin_id,
+            reason=reason,
+        )
+        if self._custody_event_repository is not None:
+            await self._custody_event_repository.append(
+                card_id=_as_object_id(card_id),
+                event_type="card_unlinked",
+                previous_owner_id=None,
+                new_owner_id=None,
+                performed_by_admin_id=_as_object_id(admin_id),
+                reason=reason,
+                now=utc_now(),
+            )
+        return await self.describe_admin_card(card_id=card_id)
+
+    async def list_custody_events(self, limit: int = 50) -> CustodyEventListOutput:
+        if self._custody_event_repository is None:
+            return CustodyEventListOutput(items=[])
+        docs = await self._custody_event_repository.list_recent(limit=limit)
+        items: list[CustodyEventOutput] = []
+        for doc in docs:
+            card_id_raw = doc.get("card_id")
+            card_id_str = str(card_id_raw) if card_id_raw is not None else ""
+            prev_owner = doc.get("previous_owner_id")
+            new_owner = doc.get("new_owner_id")
+            admin_raw = doc.get("performed_by_admin_id")
+            items.append(
+                CustodyEventOutput(
+                    id=str(doc["_id"]),
+                    card_id=card_id_str,
+                    card_serial=None,
+                    event_type=str(doc.get("event_type", "")),
+                    previous_owner_id=str(prev_owner) if prev_owner is not None else None,
+                    new_owner_id=str(new_owner) if new_owner is not None else None,
+                    performed_by_admin_id=str(admin_raw) if admin_raw is not None else "",
+                    reason=doc.get("reason"),
+                    created_at=doc["created_at"],
+                )
+            )
+        return CustodyEventListOutput(items=items)
 
 
 def _as_object_id(value: ObjectId | str) -> ObjectId:
