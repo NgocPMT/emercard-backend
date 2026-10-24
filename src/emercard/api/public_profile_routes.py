@@ -31,9 +31,11 @@ def build_public_profile_router() -> APIRouter:
     @router.get("/public/{token}", response_model=PublicProfileResponse)
     async def lookup_public_profile(  # pyright: ignore[reportUnusedFunction]
         token: str,
+        request: Request,
         service: PublicProfileLookupService = Depends(get_public_profile_lookup_service),  # noqa: B008
     ) -> PublicProfileResponse:
-        result = await service.lookup(token)
+        user_agent = request.headers.get("user-agent")
+        result = await service.lookup(token, user_agent=user_agent)
         return PublicProfileResponse(profile=result.profile)
 
     @router.post(

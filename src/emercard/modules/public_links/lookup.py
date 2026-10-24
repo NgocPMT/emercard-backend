@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -16,6 +17,7 @@ from emercard.core.types import utc_now
 from emercard.db.repositories import InvalidIdentifierError, RepositoryError
 from emercard.modules.card_link_assignments.models import CardLinkAssignmentDocument
 from emercard.modules.cards.identity import hash_public_token
+from emercard.modules.link_access_history import parse_device_label
 from emercard.modules.profiles.models import ProfileDocument, profile_state, to_public_profile
 from emercard.modules.public_links.errors import (
     PublicProfileDisabledError,
@@ -44,6 +46,8 @@ class PublicAccessHistoryRepositoryProtocol(Protocol):
         card_id: ObjectId | str,
         public_access_link_id: ObjectId | str,
         accessed_at: datetime,
+        device: str | None = None,
+        latency_ms: int | None = None,
     ) -> object: ...
 
 
@@ -90,7 +94,13 @@ class PublicProfileLookupService:
         self._access_history_repository = access_history_repository
         self._token_max_length = token_max_length
 
-    async def lookup(self, raw_token: str) -> PublicProfileLookupResult:
+    async def lookup(
+        self,
+        raw_token: str,
+        *,
+        user_agent: str | None = None,
+    ) -> PublicProfileLookupResult:
+        start_time = time.perf_counter()
         if not self._valid_token_shape(raw_token):
             raise PublicProfileNotFoundError
 
@@ -152,11 +162,15 @@ class PublicProfileLookupService:
             and assignment is not None
             and link.purpose is PublicLinkPurpose.CARD
         ):
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            device_label = parse_device_label(user_agent)
             try:
                 await access_history_repository.append(
                     card_id=assignment.card_id,
                     public_access_link_id=link.id,
                     accessed_at=utc_now(),
+                    device=device_label,
+                    latency_ms=elapsed_ms,
                 )
             except Exception:
                 # Access history is observability, not a prerequisite for emergency access.
