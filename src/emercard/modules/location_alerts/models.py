@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 
+from emercard.core.types import UtcDateTime
 from emercard.modules.profiles.models import ProfileModel
 
 
@@ -54,3 +55,28 @@ class LocationAlertResult(ProfileModel):
     provider_id: str | None = None
     recipient_count: int = 0
     nearby_place: str | None = None
+
+
+class SmsDeliveryReceiptOutput(ProfileModel):
+    recipient_name: str
+    recipient_phone: str
+    recipient_relationship: str | None = None
+    status: Literal["sent", "failed"]
+    provider_id: str | None = None
+
+
+class LocationAlertIncidentOutput(ProfileModel):
+    id: str
+    created_at: UtcDateTime
+    status: Literal["sent", "provider_error", "unavailable", "cooldown"]
+    latitude: float | None = None
+    longitude: float | None = None
+    accuracy_meters: float | None = None
+    nearby_place: str | None = None
+    map_url: str | None = None
+    recipients: list[SmsDeliveryReceiptOutput] = Field(default_factory=list)
+
+
+class LocationAlertHistoryOutput(ProfileModel):
+    items: list[LocationAlertIncidentOutput]
+    next_cursor: str | None = None
