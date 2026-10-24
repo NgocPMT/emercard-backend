@@ -22,6 +22,11 @@ from emercard.modules.link_access_history import (
     LinkAccessHistoryRepository,
     to_link_access_event_output,
 )
+from emercard.modules.location_alerts import (
+    LocationAlertHistoryOutput,
+    MongoLocationAlertAuditRepository,
+    to_location_alert_incident,
+)
 from emercard.modules.profiles.repository import ProfileRepository
 from emercard.modules.public_links import PublicAccessLinkRepository, PublicLinkPurpose
 from emercard.modules.users import CurrentUserOutput, UserRepository
@@ -144,6 +149,34 @@ def build_user_card_router() -> APIRouter:
         )
         return to_user_card(card, link=link)
 
+    @router.get(
+        "/me/cards/{card_id}/alerts",
+        response_model=LocationAlertHistoryOutput,
+    )
+    async def list_my_card_alerts(  # pyright: ignore[reportUnusedFunction]
+        card_id: str,
+        limit: int = Query(default=50, ge=1, le=100),  # noqa: B008
+        cursor: str | None = Query(default=None, max_length=512),  # noqa: B008
+        user: CurrentUserOutput = Depends(get_current_user),  # noqa: B008
+        service: CardService = Depends(get_user_card_service),  # noqa: B008
+        repository: Any = Depends(get_user_card_location_alert_audit_repository),  # noqa: B008
+    ) -> LocationAlertHistoryOutput:
+        await service.get_user_card(card_id=card_id, user_id=user.id)
+        try:
+            records, next_cursor = await repository.list_by_card_id(
+                card_id=card_id,
+                limit=limit,
+                cursor=cursor,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="invalid alert history cursor") from error
+        except (InvalidIdentifierError, RepositoryError, PyMongoError) as error:
+            raise CardServiceUnavailableError("card service is unavailable") from error
+        return LocationAlertHistoryOutput(
+            items=[to_location_alert_incident(record) for record in records],
+            next_cursor=next_cursor,
+        )
+
     return router
 
 
@@ -155,6 +188,20 @@ async def get_user_card_access_history_repository(request: Request) -> Any:
         request.app.state.database.database,
         request.app.state.settings,
     )
+
+
+async def get_user_card_location_alert_audit_repository(request: Request) -> Any:
+    repository: Any = getattr(request.app.state, "location_alert_audit_repository", None)
+    if repository is not None:
+        return repository
+    database = getattr(request.app.state, "database", None)
+    database_value = getattr(database, "database", None)
+    if database_value is not None:
+        return MongoLocationAlertAuditRepository(
+            database_value,
+            request.app.state.settings,
+        )
+    return None
 
 
 async def get_user_card_service(request: Request) -> CardService:

@@ -60,8 +60,8 @@ async def get_location_alert_service(request: Request) -> LocationAlertService:
     lookup = await get_public_profile_lookup_service(request)
     database = getattr(request.app.state, "database", None)
     database_value = getattr(database, "database", None)
-    audit_repository = None
-    if database_value is not None:
+    audit_repository = getattr(request.app.state, "location_alert_audit_repository", None)
+    if audit_repository is None and database_value is not None:
         audit_repository = MongoLocationAlertAuditRepository(
             database_value,
             request.app.state.settings,

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 import pytest
@@ -15,6 +16,7 @@ from emercard.modules.location_alerts import (
     LocationAlertResult,
     LocationAlertService,
     LocationIQReverseGeocoder,
+    MongoLocationAlertAuditRepository,
     ReverseGeocodedLocation,
     SmsProviderError,
     SpeedSmsDelivery,
@@ -22,7 +24,7 @@ from emercard.modules.location_alerts import (
     strip_vietnamese_accents,
 )
 from emercard.modules.location_alerts.providers import LocationProviderError
-from emercard.modules.profiles import ProfileDocument
+from emercard.modules.profiles import EmergencyContactDocument, ProfileDocument
 from emercard.modules.public_links.lookup import PrivatePublicProfileLookupResult
 
 
@@ -248,9 +250,7 @@ async def test_locationiq_reverse_geocoder_falls_back_on_empty_display_name_or_4
     )
 
     # Case 1: 404 Unable to geocode (e.g. coordinates in open sea)
-    client_404 = FakeHttpClient(
-        FakeResponse({"error": "Unable to geocode"}, status_code=404)
-    )
+    client_404 = FakeHttpClient(FakeResponse({"error": "Unable to geocode"}, status_code=404))
     result_404 = await LocationIQReverseGeocoder(settings, client=client_404).reverse(
         latitude=10.0,
         longitude=20.0,
@@ -644,3 +644,173 @@ async def test_android_sms_delivery_raises_error_on_failure() -> None:
             occurred_at=datetime(2026, 1, 1, 10, 30, tzinfo=UTC),
             accuracy_meters=20.0,
         )
+
+
+@pytest.mark.asyncio
+async def test_location_alert_records_recipient_delivery_receipts_in_audit() -> None:
+    doc = profile()
+    doc.emergency_contacts.append(
+        EmergencyContactDocument(
+            name="Tran Thi C",
+            relationship="Spouse",
+            phone="0912345678",
+            email="spouse@example.com",
+        )
+    )
+    service, _geocoder, _sms, audit = service_for(doc)
+
+    result = await service.send(token="public-token", request=request(), client_key="127.0.0.1")
+
+    assert result.status == "sent"
+    assert len(audit.events) == 1
+    event = audit.events[0]
+    assert event["latitude"] == 10.772
+    assert event["longitude"] == 106.698
+    assert event["accuracy_meters"] == 25
+    assert len(event["recipients"]) == 2
+    assert event["recipients"][0]["recipient_name"] == "Sam Example"
+    assert event["recipients"][0]["recipient_phone"] == "090****567"
+    assert event["recipients"][0]["status"] == "sent"
+    assert event["recipients"][1]["recipient_name"] == "Tran Thi C"
+    assert event["recipients"][1]["recipient_phone"] == "091****678"
+    assert event["recipients"][1]["status"] == "sent"
+
+
+class FakeAuditCursor:
+    def __init__(self, records: list[dict[str, Any]]) -> None:
+        self.records = records
+
+    def sort(self, fields: list[tuple[str, int]]) -> FakeAuditCursor:
+        for field, direction in reversed(fields):
+            self.records.sort(
+                key=lambda record: (record[field], record["_id"]), reverse=direction < 0
+            )
+        return self
+
+    async def to_list(self, length: int | None = None) -> list[dict[str, Any]]:
+        return self.records if length is None else self.records[:length]
+
+
+class FakeAuditCollection:
+    def __init__(self) -> None:
+        self.records: list[dict[str, Any]] = []
+
+    async def insert_one(self, record: dict[str, Any]) -> None:
+        self.records.append(record)
+
+    def find(self, query: dict[str, Any]) -> FakeAuditCursor:
+        matched: list[dict[str, Any]] = []
+        for record in self.records:
+            if "card_id" in query and record.get("card_id") != query["card_id"]:
+                continue
+            if "$or" in query:
+                or_matches = False
+                for cond in query["$or"]:
+                    if (
+                        "created_at" in cond
+                        and isinstance(cond["created_at"], dict)
+                        and "$lt" in cond["created_at"]
+                        and not (record["created_at"] < cond["created_at"]["$lt"])
+                    ):
+                        continue
+                    if (
+                        "_id" in cond
+                        and isinstance(cond["_id"], dict)
+                        and "$lt" in cond["_id"]
+                        and not (record["_id"] < cond["_id"]["$lt"])
+                    ):
+                        continue
+                    or_matches = True
+                    break
+                if not or_matches:
+                    continue
+            matched.append(record)
+        return FakeAuditCursor(matched)
+
+
+class FakeAuditDb:
+    def __init__(self) -> None:
+        self.collection = FakeAuditCollection()
+
+    def __getitem__(self, name: str) -> FakeAuditCollection:
+        return self.collection
+
+
+@pytest.mark.asyncio
+async def test_mongo_location_alert_audit_repository_records_and_pages() -> None:
+    settings = Settings(environment="test")
+    fake_db = FakeAuditDb()
+    repo = MongoLocationAlertAuditRepository(fake_db, settings)
+
+    t1 = datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
+    t2 = datetime(2026, 1, 1, 11, 0, tzinfo=UTC)
+    t3 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+    await repo.record(
+        link_id="link-1",
+        card_id="card-123",
+        created_at=t1,
+        status="sent",
+        nearby_place="Place 1",
+        provider_id="p-1",
+        location_bucket="10.77,106.69",
+        client_key_hash="hash-1",
+        latitude=10.771,
+        longitude=106.691,
+        accuracy_meters=15,
+        map_url="https://map1",
+        recipients=[
+            {
+                "recipient_name": "Contact 1",
+                "recipient_phone": "090****111",
+                "status": "sent",
+            }
+        ],
+    )
+    await repo.record(
+        link_id="link-1",
+        card_id="card-123",
+        created_at=t2,
+        status="sent",
+        nearby_place="Place 2",
+        provider_id="p-2",
+        location_bucket="10.77,106.69",
+        client_key_hash="hash-2",
+        latitude=10.772,
+        longitude=106.692,
+        accuracy_meters=20,
+        map_url="https://map2",
+        recipients=[
+            {
+                "recipient_name": "Contact 2",
+                "recipient_phone": "090****222",
+                "status": "sent",
+            }
+        ],
+    )
+    await repo.record(
+        link_id="link-1",
+        card_id="card-other",
+        created_at=t3,
+        status="sent",
+        nearby_place="Place 3",
+        provider_id="p-3",
+        location_bucket="10.77,106.69",
+        client_key_hash="hash-3",
+    )
+
+    page1, cursor1 = await repo.list_by_card_id(card_id="card-123", limit=1)
+    assert len(page1) == 1
+    assert page1[0]["nearby_place"] == "Place 2"
+    assert cursor1 is not None
+
+    page2, cursor2 = await repo.list_by_card_id(card_id="card-123", limit=1, cursor=cursor1)
+    assert len(page2) == 1
+    assert page2[0]["nearby_place"] == "Place 1"
+    assert cursor2 is None
+
+    with pytest.raises(ValueError, match="limit must be between 1 and 100"):
+        await repo.list_by_card_id(card_id="card-123", limit=0)
+
+    with pytest.raises(ValueError, match="invalid alert history cursor"):
+        await repo.list_by_card_id(card_id="card-123", cursor="invalid!cursor")

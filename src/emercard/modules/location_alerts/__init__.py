@@ -1,10 +1,13 @@
 """Scanner-location alert domain."""
 
 from emercard.modules.location_alerts.models import (
+    LocationAlertHistoryOutput,
+    LocationAlertIncidentOutput,
     LocationAlertRequest,
     LocationAlertResponse,
     LocationAlertResult,
     ReverseGeocodedLocation,
+    SmsDeliveryReceiptOutput,
 )
 from emercard.modules.location_alerts.providers import (
     AndroidSmsDelivery,
@@ -20,6 +23,7 @@ from emercard.modules.location_alerts.providers import (
 from emercard.modules.location_alerts.repository import (
     LocationAlertAuditRepository,
     MongoLocationAlertAuditRepository,
+    to_location_alert_incident,
 )
 from emercard.modules.location_alerts.service import (
     LocationAlertExternalError,
@@ -31,6 +35,8 @@ __all__ = [
     "AndroidSmsDelivery",
     "LocationAlertAuditRepository",
     "LocationAlertExternalError",
+    "LocationAlertHistoryOutput",
+    "LocationAlertIncidentOutput",
     "LocationAlertLimiter",
     "LocationAlertRequest",
     "LocationAlertResponse",
@@ -41,9 +47,11 @@ __all__ = [
     "ReverseGeocoder",
     "ReverseGeocodedLocation",
     "SmsDelivery",
+    "SmsDeliveryReceiptOutput",
     "SmsProviderError",
     "SpeedSmsDelivery",
     "build_map_url",
     "format_location_alert_sms",
     "strip_vietnamese_accents",
+    "to_location_alert_incident",
 ]

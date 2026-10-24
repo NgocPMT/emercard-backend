@@ -1512,6 +1512,117 @@ def test_user_card_access_history_route_is_owner_scoped_and_minimized() -> None:
     )
 
 
+def test_user_card_alerts_route_is_authenticated_and_pages() -> None:
+    owner = user()
+    user_repository = UserRepository(owner)
+    service = AsyncMock(spec=CardService)
+    safe_card = card(status=CardStatus.ACTIVE)
+    service.get_user_card.return_value = safe_card
+
+    alert_repo = AsyncMock()
+    alert_event = {
+        "_id": ObjectId("507f1f77bcf86cd799439099"),
+        "created_at": NOW,
+        "status": "sent",
+        "latitude": 10.772,
+        "longitude": 106.698,
+        "accuracy_meters": 12.0,
+        "nearby_place": "Ben Nghe, District 1, HCMC",
+        "map_url": "https://maps.google.com/?q=10.772,106.698",
+        "recipients": [
+            {
+                "recipient_name": "Nguyen Van B",
+                "recipient_phone": "090****567",
+                "recipient_relationship": "Friend",
+                "status": "sent",
+                "provider_id": "sms-123",
+            }
+        ],
+    }
+    alert_repo.list_by_card_id.return_value = ([alert_event], "opaque-next-alert-page")
+
+    app = create_app(
+        settings=settings(),
+        database=FakeDatabase(ready=True),
+        auth_repository=user_repository,
+        profile_repository=ProfileRepository(profile(ready=True)),
+        location_alert_audit_repository=alert_repo,
+    )
+    app.dependency_overrides[get_user_card_service] = lambda: service
+
+    with TestClient(app) as client:
+        unauthenticated = client.get(f"/api/v1/me/cards/{safe_card.id}/alerts")
+        assert (
+            client.post(
+                "/api/v1/auth/login",
+                json={"email": "person@example.com", "password": "password-123"},
+            ).status_code
+            == 200
+        )
+        response = client.get(f"/api/v1/me/cards/{safe_card.id}/alerts?limit=5")
+
+    assert unauthenticated.status_code == 401
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == "507f1f77bcf86cd799439099"
+    assert data["items"][0]["latitude"] == 10.772
+    assert data["items"][0]["longitude"] == 106.698
+    assert data["items"][0]["accuracy_meters"] == 12.0
+    assert data["items"][0]["nearby_place"] == "Ben Nghe, District 1, HCMC"
+    assert data["items"][0]["map_url"] == "https://maps.google.com/?q=10.772,106.698"
+    assert data["items"][0]["recipients"] == [
+        {
+            "recipient_name": "Nguyen Van B",
+            "recipient_phone": "090****567",
+            "recipient_relationship": "Friend",
+            "status": "sent",
+            "provider_id": "sms-123",
+        }
+    ]
+    assert data["next_cursor"] == "opaque-next-alert-page"
+    alert_repo.list_by_card_id.assert_awaited_once_with(
+        card_id=str(safe_card.id),
+        limit=5,
+        cursor=None,
+    )
+
+
+def test_user_card_alerts_route_handles_validation_and_not_found() -> None:
+    owner = user()
+    user_repository = UserRepository(owner)
+    service = AsyncMock(spec=CardService)
+    safe_card = card(status=CardStatus.ACTIVE)
+    service.get_user_card.return_value = safe_card
+
+    alert_repo = AsyncMock()
+    alert_repo.list_by_card_id.side_effect = ValueError("invalid alert history cursor")
+
+    app = create_app(
+        settings=settings(),
+        database=FakeDatabase(ready=True),
+        auth_repository=user_repository,
+        profile_repository=ProfileRepository(profile(ready=True)),
+        location_alert_audit_repository=alert_repo,
+    )
+    app.dependency_overrides[get_user_card_service] = lambda: service
+
+    with TestClient(app) as client:
+        assert (
+            client.post(
+                "/api/v1/auth/login",
+                json={"email": "person@example.com", "password": "password-123"},
+            ).status_code
+            == 200
+        )
+        invalid_cursor = client.get(f"/api/v1/me/cards/{safe_card.id}/alerts?cursor=bad")
+        assert invalid_cursor.status_code == 422
+
+        service.get_user_card.side_effect = CardNotFoundError("card not found")
+        not_found = client.get(f"/api/v1/me/cards/{safe_card.id}/alerts")
+        assert not_found.status_code == 404
+
+
 def test_user_card_routes_are_authenticated_and_safe() -> None:
     owner = user()
     user_repository = UserRepository(owner)

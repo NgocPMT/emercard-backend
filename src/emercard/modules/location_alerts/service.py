@@ -7,7 +7,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from emercard.core.types import utc_now
 from emercard.modules.location_alerts.models import (
@@ -41,6 +41,11 @@ class AuditRepository(Protocol):
         provider_id: str | None,
         location_bucket: str | None,
         client_key_hash: str,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        accuracy_meters: float | None = None,
+        map_url: str | None = None,
+        recipients: list[dict[str, Any]] | None = None,
     ) -> None: ...
 
 
@@ -137,8 +142,8 @@ class LocationAlertService:
             )
             return LocationAlertResult(status="unavailable")
 
-        recipients = [contact.phone for contact in profile.emergency_contacts if contact.phone]
-        if not recipients:
+        recipient_contacts = [contact for contact in profile.emergency_contacts if contact.phone]
+        if not recipient_contacts:
             await self._audit(
                 resolved,
                 status="unavailable",
@@ -161,10 +166,12 @@ class LocationAlertService:
 
         provider_ids: list[str] = []
         last_error: Exception | None = None
-        for recipient in recipients:
+        delivery_receipts: list[dict[str, Any]] = []
+
+        for contact in recipient_contacts:
             try:
                 provider_id = await self._sms_delivery.send_location_alert(
-                    recipient_phone=recipient,
+                    recipient_phone=contact.phone,
                     display_name=profile.display_name,
                     nearby_place=location.nearby_place,
                     map_url=location.map_url,
@@ -173,8 +180,26 @@ class LocationAlertService:
                 )
                 if provider_id:
                     provider_ids.append(provider_id)
+                delivery_receipts.append(
+                    {
+                        "recipient_name": contact.name,
+                        "recipient_phone": _mask_phone(contact.phone),
+                        "recipient_relationship": contact.relationship,
+                        "status": "sent",
+                        "provider_id": provider_id,
+                    }
+                )
             except SmsProviderError as error:
                 last_error = error
+                delivery_receipts.append(
+                    {
+                        "recipient_name": contact.name,
+                        "recipient_phone": _mask_phone(contact.phone),
+                        "recipient_relationship": contact.relationship,
+                        "status": "failed",
+                        "provider_id": None,
+                    }
+                )
                 continue
 
         if not provider_ids and last_error is not None:
@@ -185,6 +210,11 @@ class LocationAlertService:
                 provider_id=None,
                 location_bucket=_location_bucket(request.latitude, request.longitude),
                 client_key_hash=client_hash,
+                latitude=request.latitude,
+                longitude=request.longitude,
+                accuracy_meters=request.accuracy_meters,
+                map_url=location.map_url,
+                recipients=delivery_receipts,
             )
             raise LocationAlertExternalError from last_error
 
@@ -195,11 +225,16 @@ class LocationAlertService:
             provider_id=provider_ids[0] if provider_ids else None,
             location_bucket=_location_bucket(request.latitude, request.longitude),
             client_key_hash=client_hash,
+            latitude=request.latitude,
+            longitude=request.longitude,
+            accuracy_meters=request.accuracy_meters,
+            map_url=location.map_url,
+            recipients=delivery_receipts,
         )
         return LocationAlertResult(
             status="sent",
             provider_id=provider_ids[0] if provider_ids else None,
-            recipient_count=len(recipients),
+            recipient_count=len(recipient_contacts),
             nearby_place=location.nearby_place,
         )
 
@@ -212,6 +247,11 @@ class LocationAlertService:
         provider_id: str | None,
         location_bucket: str | None,
         client_key_hash: str,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        accuracy_meters: float | None = None,
+        map_url: str | None = None,
+        recipients: list[dict[str, Any]] | None = None,
     ) -> None:
         if self._audit_repository is None:
             return
@@ -226,6 +266,11 @@ class LocationAlertService:
                 provider_id=provider_id,
                 location_bucket=location_bucket,
                 client_key_hash=client_key_hash,
+                latitude=latitude,
+                longitude=longitude,
+                accuracy_meters=accuracy_meters,
+                map_url=map_url,
+                recipients=recipients,
             )
         except Exception:
             return
@@ -235,3 +280,15 @@ def _location_bucket(latitude: float, longitude: float) -> str:
     """Round coordinates to roughly kilometre-scale audit data."""
 
     return f"{round(latitude, 2):.2f},{round(longitude, 2):.2f}"
+
+
+def _mask_phone(phone: str) -> str:
+    """Mask phone digits to preserve privacy in audit logs.
+
+    Keeps first 3 and last 3 digits recognizable to the owner.
+    """
+
+    cleaned = phone.strip()
+    if len(cleaned) >= 7:
+        return f"{cleaned[:3]}****{cleaned[-3:]}"
+    return "****"
