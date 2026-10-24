@@ -110,12 +110,53 @@ class AdminCardOutput(CardSchema):
     owner: CardOwnerOutput | None = None
     link: PublicLinkSummaryOutput | None = None
     assignment: CardAssignmentSummaryOutput | None = None
+    batch_id: str | None = None
+    chip_type: str | None = None
+    hardware_uid: str | None = None
     provisioned_at: UtcDateTime | None = None
     encoding_verified_at: UtcDateTime | None = None
     assigned_at: UtcDateTime | None = None
     issued_at: UtcDateTime | None = None
     created_at: UtcDateTime
     updated_at: UtcDateTime
+
+
+class CardInventoryStatsOutput(CardSchema):
+    total: int
+    active: int
+    available: int
+    suspended: int
+    lost: int
+    void: int
+
+
+class BatchCardProvisionInput(CardSchema):
+    batch_id: str = Field(min_length=3, max_length=64)
+    chip_type: str = Field(default="ntag215", max_length=32)
+    quantity: int = Field(ge=1, le=500)
+
+
+class BatchCardProvisionOutput(CardSchema):
+    batch_id: str
+    chip_type: str
+    quantity: int
+    serial_start: str
+    serial_end: str
+    cards: list[AdminCardOutput]
+
+
+class CardStatusUpdateInput(CardSchema):
+    target_status: Literal["active", "suspended", "lost", "void"]
+    reason: str | None = Field(default=None, max_length=256)
+
+
+class QuickLinkCardInput(CardSchema):
+    user_id: str = Field(min_length=1, max_length=64)
+    reason: str | None = Field(default=None, max_length=256)
+
+
+class QuickUnlinkCardInput(CardSchema):
+    reason: str | None = Field(default=None, max_length=256)
 
 
 class CardProvisioningOutput(CardSchema):
@@ -167,12 +208,17 @@ class UserCardListOutput(CardSchema):
 class CustodyEventOutput(CardSchema):
     id: str
     card_id: str
-    event_type: Literal["assigned", "reassigned", "unassigned", "issued", "voided"]
+    card_serial: str | None = None
+    event_type: str
     previous_owner_id: str | None = None
     new_owner_id: str | None = None
     performed_by_admin_id: str
-    reason: ReassignmentReason | None = None
+    reason: str | None = None
     created_at: UtcDateTime
+
+
+class CustodyEventListOutput(CardSchema):
+    items: list[CustodyEventOutput]
 
 
 def encoding_state(
@@ -278,6 +324,9 @@ def to_admin_card(
         owner=owner,
         link=to_public_link_summary(link) if link is not None else None,
         assignment=to_card_assignment_summary(assignment) if assignment is not None else None,
+        batch_id=card.batch_id,
+        chip_type=card.chip_type,
+        hardware_uid=card.hardware_uid,
         provisioned_at=card.provisioned_at,
         encoding_verified_at=card.encoding_verified_at,
         assigned_at=card.assigned_at,
@@ -320,6 +369,8 @@ class CardListQuery(CardSchema):
     status: CardStatus | None = None
     owner_id: str | None = None
     serial: str | None = None
+    search: str | None = None
+    batch_id: str | None = None
     is_current: bool | None = None
     encoding_state: EncodingState | None = None
     issued: bool | None = None
