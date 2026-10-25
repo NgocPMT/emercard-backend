@@ -105,15 +105,19 @@ def format_location_alert_sms(
     )
     place = strip_vietnamese_accents(nearby_place.strip() or "vi tri duoc chia se")
 
-    prefix = "[EmerCard] Canh bao: Co nguoi quet the cua "
+    clean_map_url = (
+        map_url.removeprefix("https://").removeprefix("http://").removeprefix("www.")
+    )
+
+    prefix = "EmerCard - Canh bao: Co nguoi quet the cua "
     middle = " tai "
-    suffix = f". Vi tri: {map_url}"
+    suffix = f". Vi tri: {clean_map_url}"
 
     overhead = len(prefix) + len(middle) + len(suffix)
     available = max_length - overhead
 
     if available <= 0:
-        return f"[EmerCard] Canh bao quet the: {map_url}"[:max_length]
+        return f"EmerCard - Canh bao quet the: {clean_map_url}"[:max_length]
 
     if len(holder) + len(place) > available:
         max_holder = min(len(holder), 20)

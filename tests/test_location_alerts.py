@@ -459,9 +459,11 @@ def test_format_location_alert_sms_fits_single_segment() -> None:
         max_length=160,
     )
     assert len(message) <= 160
-    assert "https://www.google.com/maps?q=" in message
+    assert "google.com/maps?q=" in message
+    assert "https://" not in message
     assert "Nguyen Van A" in message
-    assert "[EmerCard]" in message
+    assert "EmerCard - Canh bao:" in message
+    assert "[" not in message and "]" not in message
     assert "..." in message
     assert "\u2026" not in message
     assert all(ord(c) < 128 for c in message)
