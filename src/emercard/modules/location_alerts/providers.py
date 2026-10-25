@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import secrets
 import unicodedata
-from datetime import datetime
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Protocol, cast
 from urllib.parse import urlencode
 
@@ -11,6 +12,8 @@ import httpx
 
 from emercard.core.config import Settings
 from emercard.modules.location_alerts.models import ReverseGeocodedLocation
+
+_VIETNAM_TZ = timezone(timedelta(hours=7))
 
 
 class LocationProviderError(RuntimeError):
@@ -97,6 +100,8 @@ def format_location_alert_sms(
     display_name: str | None,
     nearby_place: str,
     map_url: str,
+    occurred_at: datetime | None = None,
+    tag: str | None = None,
     max_length: int = 160,
 ) -> str:
     """Build a concise, unaccented SMS alert fitting within GSM-7 single-segment limit."""
@@ -109,7 +114,24 @@ def format_location_alert_sms(
         map_url.removeprefix("https://").removeprefix("http://").removeprefix("www.")
     )
 
-    prefix = "EmerCard - Canh bao: Co nguoi quet the cua "
+    tag_elements: list[str] = []
+    if occurred_at is not None:
+        local_time = (
+            occurred_at.astimezone(_VIETNAM_TZ)
+            if occurred_at.tzinfo is not None
+            else occurred_at.replace(tzinfo=UTC).astimezone(_VIETNAM_TZ)
+        )
+        tag_elements.append(local_time.strftime("%H:%M:%S"))
+
+    if tag is not None:
+        tag_elements.append(f"#{tag.lstrip('#')}")
+    elif occurred_at is not None:
+        tag_elements.append(f"#{secrets.token_hex(2)}")
+
+    joined_tag = " ".join(tag_elements)
+    tag_suffix = f" ({joined_tag})" if tag_elements else ""
+
+    prefix = f"EmerCard - Canh bao{tag_suffix}: Co nguoi quet the cua "
     middle = " tai "
     suffix = f". Vi tri: {clean_map_url}"
 
@@ -117,7 +139,7 @@ def format_location_alert_sms(
     available = max_length - overhead
 
     if available <= 0:
-        return f"EmerCard - Canh bao quet the: {clean_map_url}"[:max_length]
+        return f"EmerCard - Canh bao quet the{tag_suffix}: {clean_map_url}"[:max_length]
 
     if len(holder) + len(place) > available:
         max_holder = min(len(holder), 20)
@@ -151,6 +173,7 @@ class SpeedSmsDelivery:
             display_name=display_name,
             nearby_place=nearby_place,
             map_url=map_url,
+            occurred_at=occurred_at,
             max_length=160,
         )
         token = (
@@ -221,6 +244,7 @@ class AndroidSmsDelivery:
             display_name=display_name,
             nearby_place=nearby_place,
             map_url=map_url,
+            occurred_at=occurred_at,
             max_length=160,
         )
         raw_url = self._settings.android_sms_gateway_url.rstrip("/")

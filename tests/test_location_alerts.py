@@ -469,6 +469,24 @@ def test_format_location_alert_sms_fits_single_segment() -> None:
     assert all(ord(c) < 128 for c in message)
 
 
+def test_format_location_alert_sms_with_timestamp_and_tag() -> None:
+    occurred = datetime(2026, 10, 25, 14, 25, 30, tzinfo=UTC)  # 21:25:30 VN
+    message = format_location_alert_sms(
+        display_name="Nguyễn Văn A",
+        nearby_place="Bệnh viện Chợ Rẫy, Phường 12, Quận 5, TP Hồ Chí Minh",
+        map_url="https://www.google.com/maps?q=10.7578291,106.6598212",
+        occurred_at=occurred,
+        tag="a3f1",
+        max_length=160,
+    )
+    assert len(message) <= 160
+    assert "21:25:30 #a3f1" in message
+    assert "EmerCard - Canh bao (21:25:30 #a3f1):" in message
+    assert "google.com/maps?q=" in message
+    assert "https://" not in message
+    assert all(ord(c) < 128 for c in message)
+
+
 @pytest.mark.asyncio
 async def test_speedsms_delivery_success() -> None:
     settings = Settings(
