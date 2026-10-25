@@ -119,14 +119,27 @@ def build_admin_card_router() -> APIRouter:
         payload: QuickLinkCardInput,
         current_admin: CurrentUserOutput = Depends(require_admin),  # noqa: B008
         service: CardService = Depends(get_card_service),  # noqa: B008
+        user_repository: UserRepository = Depends(get_card_user_repository),  # noqa: B008
     ) -> AdminCardOutput:
-        card, link, assignment = await service.quick_link(
+        result = await service.quick_link(
             card_id=card_id,
             user_id=payload.user_id,
             admin_id=current_admin.id,
             reason=payload.reason,
         )
-        return to_admin_card(card, link=link, assignment=assignment)
+        if len(result) == 4:
+            card, link, assignment, public_url = result  # pyright: ignore[reportGeneralTypeIssues]
+        else:
+            card, link, assignment = result  # pyright: ignore[reportGeneralTypeIssues]
+            public_url = None
+        owners = await _owner_outputs([card], user_repository)
+        return to_admin_card(
+            card,
+            owner=owners.get(str(card.owner_id)),
+            link=link,
+            assignment=assignment,
+            public_url=public_url,
+        )
 
     @router.post("/cards/{card_id}/quick-unlink", response_model=AdminCardOutput)
     async def quick_unlink_card(  # pyright: ignore[reportUnusedFunction]
@@ -320,13 +333,14 @@ def build_admin_card_router() -> APIRouter:
         payload: LinkAttachInput,
         current_admin: CurrentUserOutput = Depends(require_admin),  # noqa: B008
         service: CardService = Depends(get_card_service),  # noqa: B008
+        user_repository: UserRepository = Depends(get_card_user_repository),  # noqa: B008
     ) -> AdminCardOutput:
         await service.attach_card_link(
             card_id=card_id,
             public_access_link_id=payload.public_access_link_id,
             admin_id=current_admin.id,
         )
-        return await _admin_card_output(service, card_id)
+        return await _admin_card_output(service, card_id, user_repository=user_repository)
 
     @router.post("/cards/{card_id}/link/activate", response_model=AdminCardOutput)
     async def activate_card_link(  # pyright: ignore[reportUnusedFunction]
@@ -453,9 +467,18 @@ def _encode_cursor(created_at: datetime, card_id: ObjectId) -> str:
     return base64.urlsafe_b64encode(payload).decode().rstrip("=")
 
 
-async def _admin_card_output(service: CardService, card_id: str) -> AdminCardOutput:
+async def _admin_card_output(
+    service: CardService,
+    card_id: str,
+    user_repository: UserRepository | None = None,
+    public_url: str | None = None,
+) -> AdminCardOutput:
     card, link, assignment = await service.describe_admin_card(card_id=card_id)
-    return to_admin_card(card, link=link, assignment=assignment)
+    owner = None
+    if user_repository is not None and card.owner_id is not None:
+        owners = await _owner_outputs([card], user_repository)
+        owner = owners.get(str(card.owner_id))
+    return to_admin_card(card, owner=owner, link=link, assignment=assignment, public_url=public_url)
 
 
 def _decode_cursor(value: str) -> tuple[datetime, ObjectId]:

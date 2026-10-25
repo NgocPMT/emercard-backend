@@ -119,6 +119,7 @@ class AdminCardOutput(CardSchema):
     issued_at: UtcDateTime | None = None
     created_at: UtcDateTime
     updated_at: UtcDateTime
+    public_url: str | None = None
 
 
 class CardInventoryStatsOutput(CardSchema):
@@ -314,6 +315,7 @@ def to_admin_card(
     owner: CardOwnerOutput | None = None,
     link: PublicAccessLinkDocument | None = None,
     assignment: CardLinkAssignmentDocument | None = None,
+    public_url: str | None = None,
 ) -> AdminCardOutput:
     return AdminCardOutput(
         id=str(card.id),
@@ -333,6 +335,7 @@ def to_admin_card(
         issued_at=card.issued_at,
         created_at=card.created_at,
         updated_at=card.updated_at,
+        public_url=public_url,
     )
 
 
