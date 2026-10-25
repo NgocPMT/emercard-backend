@@ -120,8 +120,8 @@ def format_location_alert_sms(
         holder = holder[:max_holder]
         remaining_for_place = available - len(holder)
         if len(place) > remaining_for_place:
-            cutoff = max(0, remaining_for_place - 1)
-            place = place[:cutoff] + "…" if remaining_for_place > 1 else ""
+            cutoff = max(0, remaining_for_place - 3)
+            place = place[:cutoff] + "..." if remaining_for_place >= 3 else ""
 
     return f"{prefix}{holder}{middle}{place}{suffix}"
 
@@ -244,6 +244,7 @@ class AndroidSmsDelivery:
             "textMessage": {
                 "text": content,
             },
+            "withDeliveryReport": False,
         }
 
         try:
