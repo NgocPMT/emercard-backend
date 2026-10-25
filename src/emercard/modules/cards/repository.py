@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 import inspect
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any, cast
 
 from bson.errors import InvalidId
 from bson.objectid import ObjectId
-from pymongo import ASCENDING, ReturnDocument
+from pymongo import DESCENDING, ReturnDocument
 from pymongo.errors import DuplicateKeyError, OperationFailure
 
 from emercard.core.config import Settings
@@ -138,9 +138,7 @@ class CardRepository:
         *,
         session: Any | None = None,
     ) -> dict[str, int]:
-        pipeline: list[dict[str, Any]] = [
-            {"$group": {"_id": "$status", "count": {"$sum": 1}}}
-        ]
+        pipeline: list[dict[str, Any]] = [{"$group": {"_id": "$status", "count": {"$sum": 1}}}]
         res = self._collection.aggregate(pipeline, **_session_kwargs(session))
         cursor = await res if inspect.isawaitable(res) else res
         counts: dict[str, int] = {}
@@ -423,15 +421,15 @@ class CardRepository:
             and_clauses.append(
                 {
                     "$or": [
-                        {"created_at": {"$gt": created_at}},
-                        {"created_at": created_at, "_id": {"$gt": card_id}},
+                        {"created_at": {"$lt": created_at}},
+                        {"created_at": created_at, "_id": {"$lt": card_id}},
                     ]
                 }
             )
         if and_clauses:
             query["$and"] = and_clauses
         cursor = self._collection.find(query, **_session_kwargs(session)).sort(
-            [("created_at", ASCENDING), ("_id", ASCENDING)]
+            [("created_at", DESCENDING), ("_id", DESCENDING)]
         )
         return _cards(await cursor.to_list(length=limit + 1))
 
