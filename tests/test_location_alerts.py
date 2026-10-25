@@ -462,6 +462,9 @@ def test_format_location_alert_sms_fits_single_segment() -> None:
     assert "https://www.google.com/maps?q=" in message
     assert "Nguyen Van A" in message
     assert "[EmerCard]" in message
+    assert "..." in message
+    assert "\u2026" not in message
+    assert all(ord(c) < 128 for c in message)
 
 
 @pytest.mark.asyncio
@@ -590,6 +593,7 @@ async def test_android_sms_delivery_success() -> None:
     assert isinstance(payload, dict)
     assert payload["phoneNumbers"] == ["+84364933038"]
     assert "textMessage" in payload
+    assert payload.get("withDeliveryReport") is False
 
 
 @pytest.mark.asyncio
@@ -620,7 +624,10 @@ async def test_android_sms_delivery_normalizes_cloud_messages_endpoint() -> None
     assert message_id == "cloud-msg-123"
     assert len(client.post_calls) == 1
     assert client.post_calls[0]["url"] == "https://api.sms-gate.app/3rdparty/v1/messages"
-    assert client.post_calls[0]["json"]["phoneNumbers"] == ["+84364933038"]
+    payload = client.post_calls[0]["json"]
+    assert isinstance(payload, dict)
+    assert payload["phoneNumbers"] == ["+84364933038"]
+    assert payload.get("withDeliveryReport") is False
 
 
 @pytest.mark.asyncio
