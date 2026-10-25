@@ -14,12 +14,27 @@ from emercard.modules.users.repository import UserRepository
 def build_auth_router() -> APIRouter:
     router = APIRouter(prefix="/auth", tags=["authentication"])
 
+    def _set_auth_cookie(response: Response, settings: Any, token: str) -> None:
+        response.set_cookie(
+            key=settings.auth_cookie_name,
+            value=token,
+            max_age=settings.auth_access_token_lifetime_seconds,
+            httponly=settings.auth_cookie_http_only,
+            secure=settings.auth_cookie_secure,
+            samesite=settings.auth_cookie_same_site,
+            path=settings.auth_cookie_path,
+        )
+
     @router.post("/register", response_model=CurrentUserOutput, status_code=201)
     async def register(  # pyright: ignore[reportUnusedFunction]
         payload: UserRegistrationInput,
+        request: Request,
+        response: Response,
         service: AuthService = Depends(get_auth_service),  # noqa: B008
     ) -> CurrentUserOutput:  # pyright: ignore[reportUnusedFunction]
-        return await service.register(payload)
+        result = await service.register(payload)
+        _set_auth_cookie(response, request.app.state.settings, result.token)
+        return result.user
 
     @router.post("/login", response_model=CurrentUserOutput)
     async def login(  # pyright: ignore[reportUnusedFunction]
@@ -29,16 +44,7 @@ def build_auth_router() -> APIRouter:
         service: AuthService = Depends(get_auth_service),  # noqa: B008
     ) -> CurrentUserOutput:  # pyright: ignore[reportUnusedFunction]
         result = await service.login(payload)
-        settings = request.app.state.settings
-        response.set_cookie(
-            key=settings.auth_cookie_name,
-            value=result.token,
-            max_age=settings.auth_access_token_lifetime_seconds,
-            httponly=settings.auth_cookie_http_only,
-            secure=settings.auth_cookie_secure,
-            samesite=settings.auth_cookie_same_site,
-            path=settings.auth_cookie_path,
-        )
+        _set_auth_cookie(response, request.app.state.settings, result.token)
         return result.user
 
     @router.post("/logout", status_code=204)

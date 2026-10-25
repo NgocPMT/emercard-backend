@@ -81,7 +81,7 @@ class AuthService:
         self._profile_repository = profile_repository
         self._settings = settings
 
-    async def register(self, request: UserRegistrationInput) -> CurrentUserOutput:
+    async def register(self, request: UserRegistrationInput) -> LoginResult:
         try:
             user = await self._repository.create(
                 email=request.email,
@@ -97,7 +97,11 @@ class AuthService:
             await self._profile_repository.ensure_for_user(user_id=str(user.id))
         except RepositoryError as error:
             raise RegistrationProvisioningError from error
-        return _current_user_output(user)
+        current_user = _current_user_output(user)
+        return LoginResult(
+            user=current_user,
+            token=issue_session_token(str(user.id), self._settings),
+        )
 
     async def login(self, request: UserLoginInput) -> LoginResult:
         user = await self._repository.find_by_identifier(request.email)

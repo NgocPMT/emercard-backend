@@ -10,7 +10,7 @@ This document summarizes the implemented backend routes and response rules. It f
 
 ## Authentication
 
-- `POST /api/v1/auth/register` returns `201` with `CurrentUserOutput` and provisions an empty profile.
+- `POST /api/v1/auth/register` returns `201` with `CurrentUserOutput`, sets the `emercard_session` cookie, and provisions an empty profile.
 - `POST /api/v1/auth/login` returns `200` with `CurrentUserOutput` and sets the `emercard_session` cookie.
 - `GET /api/v1/me` returns the authenticated `CurrentUserOutput`.
 - `POST /api/v1/auth/logout` returns `204` and expires the cookie.

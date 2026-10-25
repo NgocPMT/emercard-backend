@@ -210,7 +210,7 @@ def test_session_tokens_reject_expiry_and_unsupported_algorithm() -> None:
         validate_session_token(wrong_algorithm, settings)
 
 
-def test_register_returns_user_without_authenticating() -> None:
+def test_register_creates_user_and_sets_auth_cookie() -> None:
     user_repository = InMemoryUserRepository()
     profile_repository = InMemoryProfileRepository()
     with make_client(user_repository, profile_repository) as client:
@@ -219,12 +219,18 @@ def test_register_returns_user_without_authenticating() -> None:
             json={"email": " Person@Example.com ", "password": "password-123"},
         )
 
-    assert response.status_code == 201
-    assert set(response.json()) == {"id", "email", "role", "phone", "created_at", "updated_at"}
-    assert response.json()["email"] == "person@example.com"
-    assert response.json()["role"] == "user"
-    assert response.json()["phone"] is None
-    assert "set-cookie" not in response.headers
+        assert response.status_code == 201
+        assert set(response.json()) == {"id", "email", "role", "phone", "created_at", "updated_at"}
+        assert response.json()["email"] == "person@example.com"
+        assert response.json()["role"] == "user"
+        assert response.json()["phone"] is None
+        assert "set-cookie" in response.headers
+        assert "emercard_session=" in response.headers["set-cookie"]
+
+        me = client.get("/api/v1/me")
+        assert me.status_code == 200
+        assert me.json()["email"] == "person@example.com"
+
     stored = next(iter(user_repository.users.values()))
     assert stored.password_hash != "password-123"
     assert stored.role == "user"
@@ -450,6 +456,7 @@ def test_authentication_errors_are_safe_and_keep_request_ids() -> None:
             "/api/v1/auth/login",
             json={"email": "person@example.com", "password": "wrong-pass"},
         )
+        client.cookies.clear()
         missing = client.get("/api/v1/me")
         client.cookies.set("emercard_session", "invalid-token")
         invalid = client.get("/api/v1/me")
