@@ -244,7 +244,7 @@ class AndroidSmsDelivery:
             "textMessage": {
                 "text": content,
             },
-            "withDeliveryReport": False,
+            "withDeliveryReport": True,
         }
 
         try:
