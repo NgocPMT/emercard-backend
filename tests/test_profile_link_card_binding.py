@@ -66,6 +66,29 @@ class MemoryCardRepository:
         )
         return self.card
 
+    async def mark_link_bound_and_activated(
+        self, *, card_id, owner_id, admin_id=None, now=None, session=None
+    ):
+        del session
+        if self.card.id != ObjectId(card_id):
+            return None
+        self.card = self.card.model_copy(
+            update={
+                "owner_id": ObjectId(owner_id),
+                "status": CardStatus.ACTIVE,
+                "is_current": True,
+                "assigned_at": now or NOW,
+                "provisioned_at": now or NOW,
+                "encoding_verified_at": now or NOW,
+                "encoded_by_admin_id": ObjectId(admin_id) if admin_id is not None else None,
+                "issued_at": now or NOW,
+                "issued_by_admin_id": ObjectId(admin_id) if admin_id is not None else None,
+                "activated_at": now or NOW,
+                "updated_at": now or NOW,
+            }
+        )
+        return self.card
+
     async def with_transaction(self, operation):
         return await operation(None)
 
@@ -76,6 +99,21 @@ class MemoryLinkRepository:
 
     async def find_by_id(self, link_id: ObjectId | str, *, session=None):
         return self.links.get(ObjectId(link_id))
+
+    async def activate_link(self, *, link_id, now=None, session=None):
+        del session
+        link = self.links.get(ObjectId(link_id))
+        if link is None:
+            return None
+        updated = link.model_copy(
+            update={
+                "status": PublicAccessLinkStatus.ACTIVE,
+                "activated_at": now or NOW,
+                "updated_at": now or NOW,
+            }
+        )
+        self.links[updated.id] = updated
+        return updated
 
     async def revoke_link(self, *, link_id, now=None, session=None):
         link = self.links.get(ObjectId(link_id))
@@ -229,8 +267,12 @@ async def test_admin_binds_pending_profile_link_and_rebind_revokes_previous_link
     )
 
     assert links.links[first.id].status is PublicAccessLinkStatus.REVOKED
-    assert cards.card.status is CardStatus.ASSIGNED
-    assert cards.card.owner_id is None
+    assert links.links[second.id].status is PublicAccessLinkStatus.ACTIVE
+    assert cards.card.status is CardStatus.ACTIVE
+    assert cards.card.owner_id == profile().user_id
+    assert cards.card.issued_at == NOW
+    assert cards.card.encoding_verified_at == NOW
+    assert cards.card.activated_at == NOW
     current = [
         item
         for item in assignments.assignments.values()

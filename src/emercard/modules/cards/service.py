@@ -608,7 +608,7 @@ class CardService:
         now: datetime | None = None,
     ) -> CardDocument:
         card = await self._require_card(card_id)
-        if card.issued_at is not None:
+        if card.status in {CardStatus.LOST, CardStatus.REPLACED, CardStatus.VOID}:
             raise CardPostDeliveryRebindError("delivered cards cannot be rebound")
         link = await self._load_public_link(public_access_link_id)
         if link is None:
@@ -637,7 +637,7 @@ class CardService:
             if existing is not None and existing.public_access_link_id == link.id:
                 return card
             if existing is not None:
-                if card.issued_at is not None:
+                if card.status in {CardStatus.LOST, CardStatus.REPLACED, CardStatus.VOID}:
                     raise CardPostDeliveryRebindError("delivered cards cannot be rebound")
                 old_link = await self._load_public_link(
                     existing.public_access_link_id, session=session
@@ -680,16 +680,45 @@ class CardService:
                     now=now,
                     session=session,
                 )
-                mark_link_bound = getattr(self._repository, "mark_link_bound", None)
-                if card.status is CardStatus.UNASSIGNED:
+                mark_bound = getattr(self._repository, "mark_link_bound_and_activated", None)
+                if callable(mark_bound):
+                    bound_card = await cast(
+                        Callable[..., Awaitable[CardDocument | None]], mark_bound
+                    )(
+                        card_id=card.id,
+                        owner_id=profile.user_id,
+                        admin_id=admin_id,
+                        now=now,
+                        session=session,
+                    )
+                else:
+                    mark_link_bound = getattr(self._repository, "mark_link_bound", None)
                     if not callable(mark_link_bound):
                         raise CardServiceUnavailableError("card service is unavailable")
                     bound_card = await cast(
                         Callable[..., Awaitable[CardDocument | None]], mark_link_bound
                     )(card_id=card.id, now=now, session=session)
-                    if bound_card is None:
-                        raise CardInvalidTransitionError("card binding state could not be updated")
-                    return bound_card
+                if bound_card is None:
+                    raise CardInvalidTransitionError("card binding state could not be updated")
+
+                if hasattr(link_repository, "activate_link"):
+                    await link_repository.activate_link(
+                        link_id=link.id, now=now, session=session
+                    )
+
+                if self._custody_event_repository is not None:
+                    await self._custody_event_repository.append(
+                        card_id=card.id,
+                        event_type="card_linked_and_activated",
+                        previous_owner_id=None,
+                        new_owner_id=_as_object_id(profile.user_id),
+                        performed_by_admin_id=_as_object_id(admin_id) if admin_id is not None else None,
+                        reason="Auto-activated on card link attachment",
+                        now=now or utc_now(),
+                        session=session,
+                    )
+
+                return bound_card
             except RepositoryConflictError as error:
                 raise CardAlreadyAssignedError("card link assignment already exists") from error
             return card
@@ -2235,7 +2264,7 @@ class CardService:
         user_id: str,
         admin_id: str,
         reason: str | None = None,
-    ) -> tuple[CardDocument, PublicAccessLinkDocument | None, CardLinkAssignmentDocument | None]:
+    ) -> tuple[CardDocument, PublicAccessLinkDocument | None, CardLinkAssignmentDocument | None, str | None]:
         user = await self._user_repository.find_by_id(_as_object_id(user_id))
         if user is None:
             raise CardUserNotFoundError("user does not exist")
@@ -2245,38 +2274,25 @@ class CardService:
             (link for link in links if link.status == PublicAccessLinkStatus.PENDING),
             None,
         )
+        public_url: str | None = None
         if target_link is None:
-            created_link, _ = await self.create_user_link(
+            created_link, public_token = await self.create_user_link(
                 user_id=user_id,
-                purpose=PublicLinkPurpose.STANDALONE,
+                purpose=PublicLinkPurpose.CARD,
                 label="Thẻ EmerCard",
             )
             target_link = created_link
+            if self._public_card_base_url and public_token:
+                public_url = f"{self._public_card_base_url}/{public_token}"
 
         await self.attach_card_link(
             card_id=card_id,
             public_access_link_id=str(target_link.id),
             admin_id=admin_id,
         )
-        await self._repository.confirm_encoding_without_token_hash(
-            card_id=card_id,
-            admin_id=admin_id,
-        )
-        await self.issue(card_id=card_id, admin_id=admin_id)
-        await self.activate_card_link(card_id=card_id, admin_id=admin_id)
 
-        if self._custody_event_repository is not None:
-            await self._custody_event_repository.append(
-                card_id=_as_object_id(card_id),
-                event_type="card_linked",
-                previous_owner_id=None,
-                new_owner_id=_as_object_id(user_id),
-                performed_by_admin_id=_as_object_id(admin_id),
-                reason=reason,
-                now=utc_now(),
-            )
-
-        return await self.describe_admin_card(card_id=card_id)
+        card, link, assignment = await self.describe_admin_card(card_id=card_id)
+        return card, link, assignment, public_url
 
     async def quick_unlink(
         self,

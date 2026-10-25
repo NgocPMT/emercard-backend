@@ -186,6 +186,47 @@ class CardRepository:
         )
         return _card(document)
 
+    async def mark_link_bound_and_activated(
+        self,
+        *,
+        card_id: ObjectId | str,
+        owner_id: ObjectId | str,
+        admin_id: ObjectId | str | None = None,
+        now: datetime | None = None,
+        session: Any | None = None,
+    ) -> CardDocument | None:
+        """Bind a blank card to a profile link and atomically mark it verified, issued, and active."""
+
+        identifier = _object_id(card_id)
+        owner_oid = _object_id(owner_id)
+        verifier = _object_id(admin_id) if admin_id is not None else None
+        timestamp = now or utc_now()
+        document = await self._collection.find_one_and_update(
+            {
+                "_id": identifier,
+                "status": {"$in": [CardStatus.UNASSIGNED, CardStatus.ASSIGNED]},
+                "is_current": {"$in": [False, True]},
+            },
+            {
+                "$set": {
+                    "owner_id": owner_oid,
+                    "status": CardStatus.ACTIVE,
+                    "is_current": True,
+                    "assigned_at": timestamp,
+                    "provisioned_at": timestamp,
+                    "encoding_verified_at": timestamp,
+                    "encoded_by_admin_id": verifier,
+                    "issued_at": timestamp,
+                    "issued_by_admin_id": verifier,
+                    "activated_at": timestamp,
+                    "updated_at": timestamp,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+            **_session_kwargs(session),
+        )
+        return _card(document)
+
     async def find_by_id(
         self, card_id: ObjectId | str, *, session: Any | None = None
     ) -> CardDocument | None:
